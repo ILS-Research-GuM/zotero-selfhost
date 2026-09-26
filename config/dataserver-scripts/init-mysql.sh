@@ -1,56 +1,37 @@
 #!/bin/sh
+# Creates all dataserver databases from scratch. Destroys existing data.
+set -e
+cd "$(dirname "$0")"
 
-MYSQL="mysql -h mysql -P 3306 -u root -pzotero"
+export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD not set}"
+MYSQL="mysql -h ${MYSQL_HOST:-mysql} -u root"
 
-echo "SET @@global.innodb_large_prefix = 1;" | $MYSQL
-#echo "SET GLOBAL sql_mode='' " | $MYSQL
-echo "set global sql_mode = '' " | $MYSQL
-echo "DROP DATABASE IF EXISTS zotero_master" | $MYSQL
-echo "DROP DATABASE IF EXISTS zotero_shard_1" | $MYSQL
-echo "DROP DATABASE IF EXISTS zotero_shard_2" | $MYSQL
-echo "DROP DATABASE IF EXISTS zotero_ids" | $MYSQL
-echo "DROP DATABASE IF EXISTS zotero_www" | $MYSQL
+for db in zotero_master zotero_shard_1 zotero_shard_2 zotero_ids zotero_www; do
+	echo "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | $MYSQL
+done
 
-echo "CREATE DATABASE zotero_master" | $MYSQL
-echo "CREATE DATABASE zotero_shard_1" | $MYSQL
-echo "CREATE DATABASE zotero_shard_2" | $MYSQL
-echo "CREATE DATABASE zotero_ids" | $MYSQL
-echo "CREATE DATABASE zotero_www" | $MYSQL
-
-# Load in master schema
 $MYSQL zotero_master < master.sql
 $MYSQL zotero_master < coredata.sql
+$MYSQL zotero_master < events.sql
 
-# Set up shard info
-echo "INSERT INTO shardHosts VALUES (1, 'mysql', 3306, 'up');" | $MYSQL zotero_master
-echo "INSERT INTO shards VALUES (1, 1, 'zotero_shard_1', 'up', '1');" | $MYSQL zotero_master
-echo "INSERT INTO shards VALUES (2, 1, 'zotero_shard_2', 'up', '1');" | $MYSQL zotero_master
+for db in zotero_shard_1 zotero_shard_2; do
+	$MYSQL $db < shard.sql
+	$MYSQL $db < triggers.sql
+done
 
-# Create first group & user
-echo "INSERT INTO libraries VALUES (1, 'user', CURRENT_TIMESTAMP, 0, 1)" | $MYSQL zotero_master
-echo "INSERT INTO libraries VALUES (2, 'group', CURRENT_TIMESTAMP, 0, 2)" | $MYSQL zotero_master
-echo "INSERT INTO users VALUES (1, 1, 'admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)" | $MYSQL zotero_master
-echo "INSERT INTO groups VALUES (1, 2, 'Shared', 'shared', 'Private', 'members', 'all', 'members', '', '', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)" | $MYSQL zotero_master
-echo "INSERT INTO groupUsers VALUES (1, 1, 'owner', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)" | $MYSQL zotero_master
-
-# Load in www schema
+$MYSQL zotero_ids < ids.sql
 $MYSQL zotero_www < www.sql
 
-echo "INSERT INTO users VALUES (1, 'admin', MD5('admin'), 'normal')" | $MYSQL zotero_www
-echo "INSERT INTO users_email (userID, email) VALUES (1, 'admin@zotero.org')" | $MYSQL zotero_www
-echo "INSERT INTO storage_institutions (institutionID, domain, storageQuota) VALUES (1, 'zotero.org', 10000)" | $MYSQL zotero_www
-echo "INSERT INTO storage_institution_email (institutionID, email) VALUES (1, 'contact@zotero.org')" | $MYSQL zotero_www
+$MYSQL zotero_master <<'EOF'
+INSERT INTO shardHosts (shardHostID, address, port, state) VALUES (1, 'mysql', 3306, 'up');
+INSERT INTO shards (shardID, shardHostID, db, state) VALUES
+	(1, 1, 'zotero_shard_1', 'up'),
+	(2, 1, 'zotero_shard_2', 'up');
+EOF
 
+# Add item types and fields of the current zotero-schema
+(cd ../admin && php schema_update > /dev/null 2>&1)
 
-# Load in shard schema
-cat shard.sql | $MYSQL zotero_shard_1
-cat triggers.sql | $MYSQL zotero_shard_1
-cat shard.sql | $MYSQL zotero_shard_2
-cat triggers.sql | $MYSQL zotero_shard_2
-
-echo "INSERT INTO shardLibraries VALUES (1, 'user', CURRENT_TIMESTAMP, 0)" | $MYSQL zotero_shard_1
-echo "INSERT INTO shardLibraries VALUES (2, 'group', CURRENT_TIMESTAMP, 0)" | $MYSQL zotero_shard_2
-
-# Load in schema on id servers
-$MYSQL zotero_ids < ids.sql
-
+./create-user.sh "${ZOTERO_ADMIN_USER:-admin}" "${ZOTERO_ADMIN_PASSWORD:?ZOTERO_ADMIN_PASSWORD not set}" "${ZOTERO_ADMIN_EMAIL:-admin@localhost}"
+# Group every new user joins as member
+./create-group.sh "${DEFAULT_GROUP_NAME:-Shared}" "${ZOTERO_ADMIN_USER:-admin}"

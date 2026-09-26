@@ -38,6 +38,15 @@ S3_ACCESS_KEY=GK$(hex 12)
 S3_SECRET_KEY=$(hex 32)
 GARAGE_RPC_SECRET=$(hex 32)
 
+# First user, created by bin/init.sh
+ZOTERO_ADMIN_USER=admin
+ZOTERO_ADMIN_PASSWORD=$(pw)
+ZOTERO_ADMIN_EMAIL=admin@localhost
+# Storage quota per new user in MB (1000000 = unlimited)
+ZOTERO_STORAGE_QUOTA_MB=1000000
+# Group all new users join (created by bin/init.sh as group 1)
+DEFAULT_GROUP_NAME=Shared
+
 # Commit of src/server/web-library (see versions.lock), updated by utils/update.sh
 WEB_LIBRARY_COMMIT=$(git -C src/server/web-library rev-parse HEAD)
 EOF

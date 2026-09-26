@@ -24,4 +24,4 @@ done
 echo "Setting up databases..."
 $DC exec -T dataserver /var/www/zotero/misc/init-mysql.sh
 
-echo "Done."
+echo "Done. Log in with user '$ZOTERO_ADMIN_USER' and the password from ZOTERO_ADMIN_PASSWORD in .env"
