@@ -17,12 +17,12 @@ class Accounts {
 	}
 
 	/**
-	 * Returns ['userID' => ..., 'username' => ...] for the Keycloak user, creating it if needed
+	 * Returns ['userID' => ..., 'username' => ...] for the OIDC user, creating it if needed
 	 */
 	public function getOrCreateUser(string $sub, string $preferredUsername, string $email): array {
 		$user = $this->row(
 			"SELECT u.userID, u.username FROM zotero_www.users_meta m JOIN zotero_www.users u USING (userID)
-				WHERE m.metaKey = 'keycloakSub' AND m.metaValue = ?", [$sub]);
+				WHERE m.metaKey = 'oidcSub' AND m.metaValue = ?", [$sub]);
 		if ($user) {
 			return $user;
 		}
@@ -33,12 +33,12 @@ class Accounts {
 			$user = $email === '' ? null : $this->row(
 				"SELECT u.userID, u.username FROM zotero_www.users u JOIN zotero_www.users_email e USING (userID)
 					WHERE e.email = ? AND NOT EXISTS (SELECT 1 FROM zotero_www.users_meta m
-						WHERE m.userID = u.userID AND m.metaKey = 'keycloakSub')
+						WHERE m.userID = u.userID AND m.metaKey = 'oidcSub')
 					LIMIT 1", [$email]);
 			if (!$user) {
 				$user = $this->createUser($this->freeUsername($preferredUsername ?: $email ?: $sub), $email);
 			}
-			$this->query("INSERT INTO zotero_www.users_meta (userID, metaKey, metaValue) VALUES (?, 'keycloakSub', ?)",
+			$this->query("INSERT INTO zotero_www.users_meta (userID, metaKey, metaValue) VALUES (?, 'oidcSub', ?)",
 				[$user['userID'], $sub]);
 			$this->claimSharedGroup((int) $user['userID'], $email);
 			$this->db->commit();
@@ -140,7 +140,7 @@ class Accounts {
 	}
 
 	private function createUser(string $username, string $email): array {
-		// Password login isn't used for Keycloak accounts, so set an unguessable one
+		// Password login isn't used for OIDC accounts, so set an unguessable one
 		$hash = password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT);
 		$this->query("INSERT INTO zotero_www.users (username, password) VALUES (?, ?)", [$username, $hash]);
 		$userID = $this->db->insert_id;
