@@ -1,69 +1,98 @@
-version: '3'
+name: zotero
+
+x-dataserver-env: &dataserver-env
+  MYSQL_HOST: mysql
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+  ZOTERO_API_URL: ${ZOTERO_API_URL:?}
+  ZOTERO_AUTH_SALT: ${ZOTERO_AUTH_SALT:?}
+  ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
+  ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:?}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+
 services:
-  db-zotero-mysql:
-    image: mysql:5.7
-    command: --default-authentication-plugin=mysql_native_password
+  mysql:
+    image: mysql:8.4
     environment:
-      - MYSQL_ROOT_PASSWORD=zotero
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
     volumes:
-      - "./config/mysql/conf.d:/etc/mysql/conf.d"
-  db-zotero-elasticsearch:
-   image: docker.elastic.co/elasticsearch/elasticsearch:5.3.0
-   environment:
-     - cluster.name=zotero
-     - xpack.security.enabled=false
-  db-zotero-redis:
-     image: redis:5.0
-  db-zotero-memcached:
-     image: memcached:1.5
-  db-zotero-localstack:
-    image: atlassianlabs/localstack
-    environment:
-      - SERVICES=sns,sqs,apigateway
-  db-zotero-minio:
+      - ./config/mysql/conf.d:/etc/mysql/conf.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -uroot"]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+
+  memcached:
+    image: memcached:1.6-alpine
+    restart: unless-stopped
+
+  minio:
     image: minio/minio
-    environment:
-      - MINIO_ACCESS_KEY=zotero
-      - MINIO_SECRET_KEY=zoterodocker
     command: server /data
-  app-zotero:
-    image: app-zotero
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${S3_PORT:-8182}:9000"
+    restart: unless-stopped
+
+  tinymce-clean:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/tinymce-clean/Dockerfile
+    restart: unless-stopped
+
+  dataserver:
+    build:
+      context: .
+      dockerfile: docker/dataserver/Dockerfile
+    environment: *dataserver-env
     ports:
-      - "8080:80"
-      - "8081:81"
-      - "8082:8082"
-    volumes:
-      - "./config/config.inc.php:/var/www/zotero/include/config/config.inc.php:ro"
-      - "./config/dbconnect.inc.php:/var/www/zotero/include/config/dbconnect.inc.php:ro"
-      - "./config/default.js:/var/www/stream-server/config/default.js:ro"
-      - "./config/dataserver-scripts/create-user.sh:/var/www/zotero/admin/create-user.sh:ro"
-      - "./config/dataserver-scripts/list-user.sh:/var/www/zotero/admin/list-user.sh:ro"
-      - "./config/dataserver-scripts/www.sql:/var/www/zotero/misc/www.sql:ro"
-      - "./config/dataserver-scripts/init-mysql.sh:/var/www/zotero/misc/init-mysql.sh:ro"
-    environment:
-      - RUN_USER=www-data
-      - RUN_GROUP=www-data
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8180}:80"
     depends_on:
-      - db-zotero-mysql
-      - db-zotero-elasticsearch
-      - db-zotero-redis
-      - db-zotero-memcached 
-    links:
-      - db-zotero-mysql:mysql
-      - db-zotero-elasticsearch:elasticsearch
-      - db-zotero-redis:redis
-      - db-zotero-memcached:memcached
-      - db-zotero-localstack:localstack
-      - db-zotero-minio:minio
-    restart: always
-  app-zotero-phpmyadmin:
-    image: phpmyadmin/phpmyadmin
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      memcached:
+        condition: service_started
+      minio:
+        condition: service_started
+      tinymce-clean:
+        condition: service_started
+    restart: unless-stopped
+
+  stream-server:
+    build:
+      context: .
+      dockerfile: docker/stream-server/Dockerfile
     ports:
-      - "8083:80"
-    environment:
-      - PMA_HOST=mysql
-    links:
-      - db-zotero-mysql:mysql
+      - "${BIND_ADDRESS:-127.0.0.1}:${STREAM_PORT:-8181}:8080"
+    depends_on:
+      - redis
+      - dataserver
+    restart: unless-stopped
+
+  web-library:
+    build:
+      context: .
+      dockerfile: docker/web-library/Dockerfile
+      args:
+        WEB_LIBRARY_COMMIT: ${WEB_LIBRARY_COMMIT:?run utils/setup-env.sh or set WEB_LIBRARY_COMMIT}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_LIBRARY_PORT:-8183}:80"
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  minio-data:

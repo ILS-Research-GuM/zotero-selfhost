@@ -1,3 +1,3 @@
 #!/bin/sh
-
-sudo docker-compose up
+cd "$(dirname "$0")/.."
+exec docker compose up -d --build
