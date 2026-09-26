@@ -53,10 +53,16 @@ ZOTERO_STORAGE_QUOTA_MB=1000000
 DEFAULT_GROUP_NAME=Shared
 SHARED_GROUP_OWNER=
 
-# Keycloak login for the web-library and the desktop client (portal service)
+# Login for the web-library and the desktop client (portal service). With OIDC_ISSUER empty,
+# users log in with username and password (bin/create-user.sh).
 OIDC_ISSUER=
 OIDC_CLIENT_ID=zotero
 OIDC_CLIENT_SECRET=
+# Button text for the OIDC login on the sign-in page
+OIDC_LABEL=
+# true: password login next to OIDC, e.g. for external users created with bin/create-user.sh.
+# Empty: only without OIDC.
+PASSWORD_LOGIN=
 
 # Commit of src/server/web-library (see versions.lock), updated by utils/update.sh
 WEB_LIBRARY_COMMIT=$(git -C src/server/web-library rev-parse HEAD)

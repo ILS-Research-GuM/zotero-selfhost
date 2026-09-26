@@ -161,7 +161,7 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${WEB_LIBRARY_PORT:-8183}:80"
     restart: unless-stopped
 
-  # Keycloak login, per-user web-library page and desktop client login
+  # Login (OIDC or password), per-user web-library page and desktop client login
   portal:
     build:
       context: .
@@ -174,9 +174,13 @@ services:
       ZOTERO_STORAGE_QUOTA_MB: ${ZOTERO_STORAGE_QUOTA_MB:-1000000}
       SHARED_GROUP_OWNER: ${SHARED_GROUP_OWNER:-}
       ZOTERO_API_URL: ${ZOTERO_API_URL:?}
+      # Checks old salted SHA1 passwords in the login without OIDC
+      ZOTERO_AUTH_SALT: ${ZOTERO_AUTH_SALT:?}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_LABEL: ${OIDC_LABEL:-}
+      PASSWORD_LOGIN: ${PASSWORD_LOGIN:-}
       WEB_LIBRARY_URL: ${WEB_LIBRARY_URL:?}
       API_SCHEME: ${API_SCHEME:?}
       API_AUTHORITY: ${API_AUTHORITY:?}

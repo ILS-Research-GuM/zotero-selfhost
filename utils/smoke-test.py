@@ -5,7 +5,9 @@ Usage: sudo utils/smoke-test.py [--public]   (after docker compose up -d and bin
 
 By default talks to the services via 127.0.0.1 and the ports from .env, so it also
 works when BIND_ADDRESS is 127.0.0.1. With --public it uses the client-facing URLs
-from .env instead, which also tests the reverse proxy.
+from .env instead, which also tests the reverse proxy. Environment variables override
+values from .env, e.g. PORTAL_PORT, OIDC_ISSUER and PASSWORD_LOGIN to check a second portal
+started with other login settings.
 """
 import hashlib
 import json
@@ -32,6 +34,7 @@ def load_env():
 
 
 ENV = load_env()
+ENV.update({k: v for k, v in os.environ.items() if k in ENV or k in ('PORTAL_PORT', 'PASSWORD_LOGIN')})
 PUBLIC = '--public' in sys.argv
 API = ENV['ZOTERO_API_URL'].rstrip('/') if PUBLIC else f"http://127.0.0.1:{ENV['API_PORT']}"
 STREAM = ENV['STREAMING_URL'] if PUBLIC else 'ws://localhost:8080'
@@ -109,9 +112,12 @@ def main():
 
 
 def portal_tests():
-	"""The portal without a real login: redirects to the OIDC provider and rejects bad callbacks"""
-	if not ENV.get('OIDC_ISSUER'):
-		print('SKIP portal checks (OIDC_ISSUER not set)')
+	"""The portal: login redirects to the OIDC provider, and with password login a real login"""
+	oidc = bool(ENV.get('OIDC_ISSUER'))
+	pw = ENV.get('PASSWORD_LOGIN', '').lower() in ('1', 'true', 'yes', 'on') if ENV.get('PASSWORD_LOGIN') else not oidc
+	if pw:
+		portal_password_tests(oidc)
+	if not oidc:
 		return
 	try:
 		with urllib.request.urlopen(ENV['OIDC_ISSUER'].rstrip('/') + '/.well-known/openid-configuration', timeout=30) as r:
@@ -130,13 +136,53 @@ def portal_tests():
 			and 'state' in query and 'nonce' in query)
 		return ok, f"{status} {location[:120]}"
 
-	check('Portal: web-library page redirects to the OIDC login', *login_redirect('/'))
-	check('Portal: desktop client login requires the OIDC login', *login_redirect('/login?session=smoketest'))
+	if pw:
+		check('Portal: OIDC button on the sign-in page leads to the OIDC login', *login_redirect('/oidc/start'))
+	else:
+		check('Portal: web-library page redirects to the OIDC login', *login_redirect('/'))
+		check('Portal: desktop client login requires the OIDC login', *login_redirect('/login?session=smoketest'))
 	status, _, _ = request('GET', PORTAL + '/oidc/callback?state=bogus&code=bogus')
 	check('Portal: callback with unknown state rejected', status == 400, status)
 	status, _, _ = request('GET', PORTAL + '/', headers={'Sec-Fetch-Mode': 'cors'})
 	check('Portal: background requests get 401 instead of a login redirect', status == 401, status)
 
+
+def portal_password_tests(oidc):
+	"""Password login: sign-in page, wrong password rejected, login as the admin user"""
+	# Cookies by hand: the session cookie is secure when WEB_LIBRARY_URL is https, even if the
+	# portal is reached over plain HTTP locally
+	cookie = {}
+
+	def get(path, body=None, headers=None):
+		h = {'Sec-Fetch-Mode': 'navigate', **(headers or {})}
+		if cookie:
+			h['Cookie'] = '; '.join(f"{k}={v}" for k, v in cookie.items())
+		if body is not None:
+			body = urllib.parse.urlencode(body)
+			h['Content-Type'] = 'application/x-www-form-urlencoded'
+		status, headers, data = request('POST' if body is not None else 'GET', PORTAL + path, body, h)
+		for c in headers.get_all('Set-Cookie') or []:
+			k, v = c.split(';', 1)[0].split('=', 1)
+			cookie[k] = v
+		return status, headers, data.decode(errors='replace')
+
+	base = ENV['WEB_LIBRARY_URL'].rstrip('/')
+	status, headers, _ = get('/login?session=smoketest')
+	check('Portal: login required, redirects to the password form',
+		status == 302 and headers.get('Location') == base + '/signin', f"{status} {headers.get('Location')}")
+	status, _, page = get('/signin')
+	csrf = page.split('name="csrf" value="', 1)[-1].split('"', 1)[0]
+	check('Portal: password form served', status == 200 and 'type="password"' in page and len(csrf) == 32
+		and ('action="/oidc/start"' in page) == oidc, status)
+	status, _, _ = get('/signin', {'csrf': csrf, 'username': ENV['ZOTERO_ADMIN_USER'], 'password': 'wrong'})
+	check('Portal: wrong password rejected', status == 401, status)
+	status, _, _ = get('/signin', {'csrf': 'bogus', 'username': ENV['ZOTERO_ADMIN_USER'], 'password': ENV['ZOTERO_ADMIN_PASSWORD']})
+	check('Portal: form without valid CSRF token rejected', status == 403, status)
+	status, headers, _ = get('/signin', {'csrf': csrf, 'username': ENV['ZOTERO_ADMIN_USER'], 'password': ENV['ZOTERO_ADMIN_PASSWORD']})
+	check('Portal: password login returns to the desktop client login',
+		status == 302 and headers.get('Location') == base + '/login?session=smoketest', f"{status} {headers.get('Location')}")
+	status, _, page = get('/')
+	check('Portal: web-library page with user configuration', status == 200 and '"apiKey"' in page, status)
 
 def run_tests(userID, key):
 	lib = f'/users/{userID}'

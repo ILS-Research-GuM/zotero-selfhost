@@ -18,7 +18,7 @@ previous package: see [Upgrading from the 2021 package](#upgrading-from-the-2021
 | `dataserver` | built, PHP 8.4 + Apache | Zotero API (sync, login, files) |
 | `stream-server` | built, Node 22 | WebSocket push notifications |
 | `web-library` | built, nginx | Static files of the browser UI |
-| `portal` | built, PHP 8.4 | OIDC login, per-user web-library page, desktop client browser login |
+| `portal` | built, PHP 8.4 | Login (OIDC and/or password), per-user web-library page, desktop client browser login |
 | `tinymce-clean` | built, Node 22 | Sanitizes note HTML for the dataserver |
 | `mysql` | `mysql:8.4` | Master, shard, ID and user databases |
 | `garage` | `dxflrs/garage` | S3-compatible file storage |
@@ -88,15 +88,27 @@ Set the URLs in `.env` (plus `API_SCHEME`/`API_AUTHORITY`) to the proxied addres
 - The streaming host needs WebSocket forwarding.
 - Clients must reach `S3_PUBLIC_URL` under exactly that host name, because upload and download URLs are
   signed for it. Keep the `Host` header, don't re-encode the path, and allow large request bodies.
-- The portal needs HTTPS, since its session cookie is marked secure.
+- With an `https` `WEB_LIBRARY_URL` the portal's session cookie is marked secure; plain HTTP setups work too.
 
 After changing `.env`, run `docker compose up -d`. If `WEB_LIBRARY_URL` changes, run `bin/init.sh` again to
 update the S3 CORS rules.
 
-## Login (OIDC)
+## Login
 
-The portal signs users in with an OpenID Connect provider. Create a confidential client there with the
-redirect URI `<WEB_LIBRARY_URL>/oidc/callback` and set in `.env`:
+The portal signs users in with an OpenID Connect provider, with username and password, or both:
+
+| `.env` | Login |
+| --- | --- |
+| `OIDC_ISSUER` empty | Username (or email) and password of accounts created with `bin/create-user.sh` |
+| `OIDC_ISSUER` set | Straight to the OIDC provider |
+| `OIDC_ISSUER` set, `PASSWORD_LOGIN=true` | Sign-in page with a button for the OIDC login (text: `OIDC_LABEL`) and the password form, e.g. for external users without an account at the provider |
+
+The password check accepts the same hashes as the dataserver (bcrypt, and salted SHA1 or MD5 from older
+installations). Failed attempts are delayed by two seconds. Accounts that the portal created for OIDC users
+have a random password, so they can only log in through the provider.
+
+For OIDC, create a confidential client at the provider with the redirect URI `<WEB_LIBRARY_URL>/oidc/callback`
+and set in `.env`:
 
 ```bash
 OIDC_ISSUER=https://id.example.org/realms/example
@@ -107,13 +119,13 @@ OIDC_CLIENT_SECRET=...
 - On the first login the portal creates a Zotero user with its own library, named after `preferred_username`.
   An existing local user with the same email that isn't linked yet is taken over instead.
 - The web-library page is generated per user, with an API key of that user.
-- The desktop client's "Log In" opens `<WEB_LIBRARY_URL>/login` in the browser; after the OIDC login the user
+- The desktop client's "Log In" opens `<WEB_LIBRARY_URL>/login` in the browser; after the login the user
   confirms the connection, and the client receives its API key.
 - Every user who can log in at the provider gets an account; restrict access in the provider if needed.
 
 ## Users and groups
 
-Users are normally created by the portal on first login. By hand:
+With OIDC, users are created by the portal on their first login. By hand, e.g. for the password login:
 
 ```bash
 ./bin/create-user.sh <username> <password> <email>   # also joins the default group
@@ -200,7 +212,7 @@ so `legacy/export.sh` dumps the databases and copies the files first. Details in
 ## Known limitations
 
 - No server-side full-text search (web-library "All Fields & Tags + full text"). Full text is stored and synced.
-- No self-service registration beyond what the OIDC provider allows.
+- No self-service registration or password reset; password accounts are created with `bin/create-user.sh`.
 - The web-library downloads fonts, styles and prebuilt reader and note-editor modules from zotero.org at image build time,
   and citation styles at runtime.
 - Translation server (adding items by identifier in the web-library) is not included.
