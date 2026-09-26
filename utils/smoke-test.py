@@ -37,6 +37,7 @@ API = ENV['ZOTERO_API_URL'].rstrip('/') if PUBLIC else f"http://127.0.0.1:{ENV['
 STREAM = ENV['STREAMING_URL'] if PUBLIC else 'ws://localhost:8080'
 S3_LOCAL = None if PUBLIC else f"127.0.0.1:{ENV['S3_PORT']}"
 WEB = ENV['WEB_LIBRARY_URL'] if PUBLIC else f"http://127.0.0.1:{ENV['WEB_LIBRARY_PORT']}"
+PORTAL = ENV['WEB_LIBRARY_URL'].rstrip('/') if PUBLIC else f"http://127.0.0.1:{ENV.get('PORTAL_PORT', '8184')}"
 failures = 0
 
 
@@ -104,6 +105,37 @@ def main():
 		run_tests(userID, key)
 	finally:
 		api('DELETE', '/keys/current', key=key)
+	portal_tests()
+
+
+def portal_tests():
+	"""The portal without a real login: redirects to the OIDC provider and rejects bad callbacks"""
+	if not ENV.get('OIDC_ISSUER'):
+		print('SKIP portal checks (OIDC_ISSUER not set)')
+		return
+	try:
+		with urllib.request.urlopen(ENV['OIDC_ISSUER'].rstrip('/') + '/.well-known/openid-configuration', timeout=30) as r:
+			authEndpoint = json.load(r)['authorization_endpoint']
+	except Exception as e:
+		check('OIDC provider discovery', False, e)
+		return
+
+	def login_redirect(path):
+		status, headers, _ = request('GET', PORTAL + path, headers={'Sec-Fetch-Mode': 'navigate'})
+		location = headers.get('Location', '')
+		query = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
+		ok = (status == 302 and location.startswith(authEndpoint + '?')
+			and query.get('client_id') == [ENV.get('OIDC_CLIENT_ID')]
+			and query.get('redirect_uri') == [ENV['WEB_LIBRARY_URL'].rstrip('/') + '/oidc/callback']
+			and 'state' in query and 'nonce' in query)
+		return ok, f"{status} {location[:120]}"
+
+	check('Portal: web-library page redirects to the OIDC login', *login_redirect('/'))
+	check('Portal: desktop client login requires the OIDC login', *login_redirect('/login?session=smoketest'))
+	status, _, _ = request('GET', PORTAL + '/oidc/callback?state=bogus&code=bogus')
+	check('Portal: callback with unknown state rejected', status == 400, status)
+	status, _, _ = request('GET', PORTAL + '/', headers={'Sec-Fetch-Mode': 'cors'})
+	check('Portal: background requests get 401 instead of a login redirect', status == 401, status)
 
 
 def run_tests(userID, key):

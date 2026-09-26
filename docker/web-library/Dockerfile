@@ -14,3 +14,5 @@ RUN npm ci && npm run build
 FROM nginx:1-alpine
 
 COPY --from=build /src/build/ /usr/share/nginx/html/
+# Static files only; the page itself comes from the portal
+COPY docker/web-library/nginx.conf /etc/nginx/conf.d/default.conf

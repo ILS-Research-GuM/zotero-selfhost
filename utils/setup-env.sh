@@ -21,12 +21,15 @@ API_PORT=8180
 STREAM_PORT=8181
 S3_PORT=8182
 WEB_LIBRARY_PORT=8183
+PORTAL_PORT=8184
 
 # URLs as reachable by clients -- change when running behind a reverse proxy
 ZOTERO_API_URL=http://$HOST:8180
 S3_PUBLIC_URL=http://$HOST:8182
 STREAMING_URL=ws://$HOST:8181/
 WEB_LIBRARY_URL=http://$HOST:8183
+API_SCHEME=http
+API_AUTHORITY=$HOST:8180
 
 # Secrets
 MYSQL_ROOT_PASSWORD=$(pw)
@@ -46,6 +49,11 @@ ZOTERO_ADMIN_EMAIL=admin@localhost
 ZOTERO_STORAGE_QUOTA_MB=1000000
 # Group all new users join (created by bin/init.sh as group 1)
 DEFAULT_GROUP_NAME=Shared
+
+# Keycloak login for the web-library and the desktop client (portal service)
+OIDC_ISSUER=
+OIDC_CLIENT_ID=zotero
+OIDC_CLIENT_SECRET=
 
 # Commit of src/server/web-library (see versions.lock), updated by utils/update.sh
 WEB_LIBRARY_COMMIT=$(git -C src/server/web-library rev-parse HEAD)

@@ -4,6 +4,8 @@ x-dataserver-env: &dataserver-env
   MYSQL_HOST: mysql
   MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
   ZOTERO_API_URL: ${ZOTERO_API_URL:?}
+  # Base of the loginURL the desktop client opens: the portal
+  ZOTERO_WWW_URL: ${WEB_LIBRARY_URL:?}
   ZOTERO_AUTH_SALT: ${ZOTERO_AUTH_SALT:?}
   ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
   ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
@@ -78,6 +80,10 @@ services:
     environment: *dataserver-env
     volumes:
       - ./data/dataserver-errors:/var/www/zotero/errors
+    networks:
+      default:
+      backend:
+        aliases: [dataserver-internal]
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8180}:80"
     depends_on:
@@ -115,4 +121,40 @@ services:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${WEB_LIBRARY_PORT:-8183}:80"
     restart: unless-stopped
+
+  # Keycloak login, per-user web-library page and desktop client login
+  portal:
+    build:
+      context: .
+      dockerfile: docker/portal/Dockerfile
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
+      ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
+      ZOTERO_STORAGE_QUOTA_MB: ${ZOTERO_STORAGE_QUOTA_MB:-1000000}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      WEB_LIBRARY_URL: ${WEB_LIBRARY_URL:?}
+      API_SCHEME: ${API_SCHEME:?}
+      API_AUTHORITY: ${API_AUTHORITY:?}
+      STREAMING_URL: ${STREAMING_URL:?}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORTAL_PORT:-8184}:80"
+    networks: [default, backend]
+    depends_on:
+      - mysql
+      - dataserver
+    restart: unless-stopped
+
+networks:
+  default:
+  # Private subnet for portal -> dataserver: the dataserver only accepts super-user
+  # requests from private addresses, and requests from outside must not come from one
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.203.77.0/28
 
