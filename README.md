@@ -1,193 +1,206 @@
 # Zotero Selfhost
 
-Zotero Selfhost is a full packaged repository aimed to make on-premise [Zotero](https://www.zotero.org) deployment easier with the last versions of both Zotero client and server. It started from the work of Samuel Hassine: https://github.com/SamuelHassine/zotero-prime.git. Major changes include:
+A self-hosted Zotero sync server: the official [dataserver](https://github.com/zotero/dataserver),
+[stream-server](https://github.com/zotero/stream-server) and [web-library](https://github.com/zotero/web-library),
+packaged with Docker Compose and without any AWS dependency. The official Zotero desktop client
+syncs against it after changing two settings, so no custom client build is needed. Login for the
+web-library and the desktop client goes through any OpenID Connect provider (e.g. Keycloak).
 
-* Reorganize directories 
-    - All source codes are put into src, client code in src/client, server code in /src/server. Modifications to the original source is maintained as patches in ./pachtes.
-    - Dockerfile & docker-composer.yml are put in top level because we want to be able to copy the necessary source into container instead of mapping host direct to container volumes. This avoid polluting source directories with node_modules and other compile results.
-    - some runtime configurations & scripts used by docker images are put in config/, and mapping to docker volumes by docker-composer.
-    - we use some utility scripts to help patch/update the official sources.
+Originally based on [zotero-prime](https://github.com/SamuelHassine/zotero-prime) and
+[foxsen/zotero-selfhost](https://github.com/foxsen/zotero-selfhost). Coming from an installation of the
+previous package: see [Upgrading from the 2021 package](#upgrading-from-the-2021-package) and
+[README-upgrade.md](README-upgrade.md) for all changes.
 
-* necessary fixes 
-    - mysql upgrade to 5.7 due to the need of large key size support. utf8mb4 needs large key size, zotero-prime choose to change it into utf8 but it might lead to issues.
-    - add mysql server params (set sql_mode) to deal with syntax compatible issues. e.g. allow the use of zero dates.
-    - adjust some default parameters of dataserver to avoid web-library rate/concurrency limit errors.
-    - use ubuntu 18.04 as default app-zotero base image. Avoid dependence on third party PPA repositories(they are often slow or even unvailable for the author). Build stream-server & tinymce-clean-serve into image instead of building them at run time. Add missing actions to get rid of some warnings. Add useful packages like vim
-    - ...
+## Services
 
-## the Zotero eco-system
+| Service | Image | Purpose |
+| --- | --- | --- |
+| `dataserver` | built, PHP 8.4 + Apache | Zotero API (sync, login, files) |
+| `stream-server` | built, Node 22 | WebSocket push notifications |
+| `web-library` | built, nginx | Static files of the browser UI |
+| `portal` | built, PHP 8.4 | OIDC login, per-user web-library page, desktop client browser login |
+| `tinymce-clean` | built, Node 22 | Sanitizes note HTML for the dataserver |
+| `mysql` | `mysql:8.4` | Master, shard, ID and user databases |
+| `garage` | `dxflrs/garage` | S3-compatible file storage |
+| `redis` | `valkey/valkey` | Rate limits and notifications |
+| `memcached` | `memcached` | Cache |
 
-It is not easy to fully understand the Zotero eco-system. It is composed of many components, and each component might be implemented with a different language or technology. Used languages include javascript/python/php/c/c++/shell/html, technologies like node.js, reactive, XULRunner, mysql/apache/redis/websocket/elasticsearch/memcached/localstack/aws/phpadmin, and etc. What's more, docs are far from enough. Up to now, I have not yet seen a clear overall arichitecture description. 
+One-shot services that run on every `docker compose up` before the others:
 
-Here is my current understanding of Zotero:
+| Service | Purpose |
+| --- | --- |
+| `init-data` | Creates the directories under `data/` with the owners the services run as |
+| `db-migrate` | Backs up and migrates the databases to the schema of the built dataserver; imports a legacy dump once |
+| `s3-import` | Uploads the files of a legacy export into Garage once |
 
-### Architecture
+What the dataserver uses on zotero.org, and what replaces it here:
 
-Overall Zotero is a client/server system with some server components and some client components, both servers and clients rely on some other aiding components.
+| zotero.org | Here |
+| --- | --- |
+| Amazon S3 | Garage. Any S3-compatible store that supports POST policy uploads works (`S3_ENDPOINT`, `S3_PUBLIC_URL`) |
+| DynamoDB (full-text index state) | Not used (`FULLTEXT_INDEXING_TABLE` empty) |
+| Elasticsearch + indexer Lambda | Not used (`SEARCH_HOSTS` empty). Clients search their local full-text index |
+| SNS / SQS | Not used |
+| zotero.org website (login, account) | `portal` with an OIDC provider |
 
-The core of server part is dataserver, which provides zotero API services. Dataserver is implemented in PHP, structure data is stored in mysql database, while documents and fulltext data are stored using amazon S3 storage or webdav. Dataserver uses localstack for SNS/SQS, memcached to cached data to reduce pressure of database server, elasticsearch to support searches, redis to do request rate limit(seems to handle notifications too), and optional StatsD for statistics(I guess). 
+## Layout
 
-There are two types of clients. One is the zotero client downloadable from zotero.org. It is a native executable built upon XULRunner. This client is versatile. First, it provides interfaces for us to operate(import/export/edit/search/organize etc.) on our materials and stores local data in a SQLite database(by default in ~/Zotero/). Second, it is extensible. We can run javascript code in a console(Tools->Developer->Run JavaScript) or write a plugin to interact with the client UI and operate on local data. Third, it has a builtin HTTP server to import data from connectors(browser plugin that sense data from web pages). Fourth, it provides a word processor integration API. Fiveth, it contains a lots of translators that can help to extrace contents from web pages and export them to other formats. The other one is web-library that provides browser based interface. Note: for API server, web-library is a client using its services; but for users, web-library is a server that providing web base interface for them to use zotero.
+- `src/server/*`: upstream sources as git submodules, unmodified; versions in `versions.lock`
+- `src/patches/dataserver/`: changes to the dataserver, applied at image build time
+- `docker/*/`: one image per service, plus the one-shot service scripts
+- `config/`: dataserver, Apache, PHP, MySQL, Garage and stream-server configuration
+- `config/dataserver-scripts/`: database setup, migrations and user management, copied into the dataserver image
+- `bin/`: day-to-day operations
+- `utils/`: setup, updates, patch check and smoke test
+- `legacy/`: export from installations of the previous package
+- `data/` (not in git): MySQL, Garage, backups, dataserver error logs, legacy import
 
-### important concepts
+## Installation
 
-* connector. Zoteror connectors are some browser plugins that provide the ability to sense data from web pages. they enable us to save web data into zotero(through zotero client or directly to online zotero database).
-* translator. The zotero client contains many translators, they allow Zotero to extract information from webpages, import and export items in various file formats (e.g. BibTeX, RIS, etc.), and look up items when given identifiers (e.g. DOIs or PubMed IDs). 
-* library. Just like the physical library, it is used to store informations like books, articles, documents and more.
-* collection/subcollection. Items in Zotero libraries can be organized with collections and tags. Collections allow hierarchical organization of items into groups and subgroups. The same item can belong to multiple collections and subcollections in your library at the same item. Collections are useful for filing items in meaningful groups (e.g., items for a particular project, from a specific source, on a specific topic, or for a particular course). You can import items directly to a specific collection or add them to collections after they are already in your library.
-* tags. Tags (often called “keywords” in other contexts) allow for detailed characterization of an item. You can tag items based on their topics, methods, status, ratings, or even based on your own workflow (e.g., “to-read”). Items can have as many tags as you like, and you can filter your library (or a specific collection) to show items having a specific set of one or more tags.  Tags are portable, but collections are not. Copying items between Zotero libraries (My Library and group libraries) will transfer their tags, but not their collection placements. Both organizational methods have unique advantages and features. Experiment with both to see what works best for your own workflow.
-
-## Server installation
-
-### Dependencies and source code
-
-* make sure docker and docker-compose are installed in your build host.
-* Clone the repository (with **--recursive** because there are multiple level of submodules)*:
-```bash
-$ mkdir /path/to/your/app && cd /path/to/your/app
-$ git clone --recursive <reporitory url here>
-$ cd zotero-selfhost
-```
-* To faciliate future updates, necessary changes to official code are maintained as patches in
-src/patches/, run in top level directory, run ./utils/patch.sh to apply them.
-
-```bash
-./utils/patch.sh
-```
-
-*Configure and run*:
-```bash
-$ sudo docker-compose up -d
-```
-docker-compose will pull(mysql, minio, redis, localstack, elasticsearch, memcached, phpadmin) or build(app-zotero) all necessary docker images for you.
-
-app-zotero is the main container for dataserver/stream-server/tinymce-clean-server.
-
-### Initialize 
-
-*Initialize databases, s3 buckets and SNS*:
-```bash
-$ ./bin/init.sh  //run after docker-compose up
-$ cd ..
-```
-
-*Available endpoints*:
-
-| Name          | URL                                           |
-| ------------- | --------------------------------------------- |
-| Zotero API    | http://localhost:8080                         |
-| Stream ws     | ws://localhost:8081                           |
-| S3 Web UI     | http://localhost:8082                         |
-| PHPMyAdmin    | http://localhost:8083                         |
-
-*Default login/password*:
-
-| Name          | Login                    | Password           |
-| ------------- | ------------------------ | ------------------ |
-| Zotero API    | admin                    | admin              |
-| S3 Web UI     | zotero                   | zoterodocker       |
-| PHPMyAdmin    | root                     | zotero             |
-
-## Client installation
-
-The official client source is almost usable. Only a few patches are needed
-to change hard-coded *zotero.org* into your urls.  Patches are put in 
-./src/patches/zotero-client/. 
-
-
-In fact, you can direct download the clients from zotero website, and change
-the file in zoter.jar:
+Requires Docker with the Compose plugin. Run the commands as a user allowed to use Docker (or with `sudo`).
 
 ```bash
-$ unpack Zoter Client, cd into the directory
-$ mkdir tmp && cd ./tmp
-$ jar xvf ../zotero.jar
-$ ... edit the ./resource/config.js file here
-$ rm -f ../zotero.jar && jar cvf ../zotero.jar .
+git clone --recursive <repository url> zotero-selfhost && cd zotero-selfhost
+./utils/setup-env.sh zotero.example.org   # host name clients use; creates .env with random secrets
+# edit .env: public URLs, OIDC_* (see below), DEFAULT_GROUP_NAME, SHARED_GROUP_OWNER
+docker compose up -d --build
+./bin/init.sh                             # one-time: S3 buckets and CORS, databases, admin user, default group
+./utils/smoke-test.py                     # optional end-to-end check
+./utils/smoke-test.py --public            # same via the client-facing URLs (tests the reverse proxy)
 ```
 
-If you are running with both server and client in your machine, only change
-./resource/config.js is enough. Otherwise, you need to change this file too:
-chrome/content/zotero/xpcom/storage/zfs.js. Because the dataserver is modified 
-to return S3 url of http://localhost:8080, client will try to use that to access
-the S3 storage and fail with S3 return 0 errors. The following patch shows how to
-change, but remember to change the domain name to your real one.
+`bin/init.sh` keeps existing databases; `bin/init.sh --force` recreates them and deletes all data.
 
-```
-diff --git a/chrome/content/zotero/xpcom/storage/zfs.js b/chrome/content/zotero/xpcom/storage/zfs.js
-index 794b5cbad..ff27a001d 100644
---- a/chrome/content/zotero/xpcom/storage/zfs.js
-+++ b/chrome/content/zotero/xpcom/storage/zfs.js
-@@ -636,6 +636,10 @@ Zotero.Sync.Storage.Mode.ZFS.prototype = {
- 		}
- 		
- 		var blob = new Blob([params.prefix, file, params.suffix]);
-+
-+		// FIXME: change https://zotero.your.domain to your server link
-+		var url = params.url.replace(/http:\/\/localhost:8082/, 'https://zotero.your.domain');
-+		params.url = url;
- 		
- 		try {
- 			var req = yield Zotero.HTTP.request(
+By default all ports listen on `127.0.0.1` only (`BIND_ADDRESS` in `.env`):
 
-```
+| Port | Service | Client-facing URL in `.env` |
+| --- | --- | --- |
+| 8180 | API | `ZOTERO_API_URL` |
+| 8181 | Streaming | `STREAMING_URL` |
+| 8182 | S3 | `S3_PUBLIC_URL` |
+| 8183 | web-library (static files) | `WEB_LIBRARY_URL` + `/static/` |
+| 8184 | portal | `WEB_LIBRARY_URL` |
 
-The build process is the same as official one.
+Put a reverse proxy with TLS in front of the ports, e.g. one host name each for API, streaming, S3 and the
+web interface. On the web interface host, route `/static/` to port 8183 and everything else to 8184.
+Set the URLs in `.env` (plus `API_SCHEME`/`API_AUTHORITY`) to the proxied addresses.
 
-### Dependencies and source code
+- The streaming host needs WebSocket forwarding.
+- Clients must reach `S3_PUBLIC_URL` under exactly that host name, because upload and download URLs are
+  signed for it. Keep the `Host` header, don't re-encode the path, and allow large request bodies.
+- The portal needs HTTPS, since its session cookie is marked secure.
 
-*Install dependencies for client build*:
+After changing `.env`, run `docker compose up -d`. If `WEB_LIBRARY_URL` changes, run `bin/init.sh` again to
+update the S3 CORS rules.
+
+## Login (OIDC)
+
+The portal signs users in with an OpenID Connect provider. Create a confidential client there with the
+redirect URI `<WEB_LIBRARY_URL>/oidc/callback` and set in `.env`:
+
 ```bash
-$ sudo apt install npm
+OIDC_ISSUER=https://id.example.org/realms/example
+OIDC_CLIENT_ID=zotero
+OIDC_CLIENT_SECRET=...
 ```
 
-For [m|l|w]: m=Mac, w=Windows, l=Linux
+- On the first login the portal creates a Zotero user with its own library, named after `preferred_username`.
+  An existing local user with the same email that isn't linked yet is taken over instead.
+- The web-library page is generated per user, with an API key of that user.
+- The desktop client's "Log In" opens `<WEB_LIBRARY_URL>/login` in the browser; after the OIDC login the user
+  confirms the connection, and the client receives its API key.
+- Every user who can log in at the provider gets an account; restrict access in the provider if needed.
 
-*Run*:
+## Users and groups
+
+Users are normally created by the portal on first login. By hand:
+
 ```bash
-$ cd client
-$ ./config.sh
-$ cd zotero-client
-$ npm install
-$ npm run build
-$ cd ../zotero-standalone-build
-$ ./fetch_xulrunner.sh -p [m|l|w]
-$ ./fetch_pdftools
-$ ./scripts/dir_build -p [m|l|w]
+./bin/create-user.sh <username> <password> <email>   # also joins the default group
+./bin/list-user.sh
+./bin/delete-user.sh <userID>                         # with library, API keys and OIDC link
+./bin/create-group.sh <name> <owner-username> [members|admins]
+./bin/set-group-role.sh <groupID> <username> <admin|member>
+./bin/create-api-key.sh <username> <password> [key-name]
 ```
 
-### First usage
+- **Shared group:** with `SHARED_GROUP_OWNER=<email>`, a group named `DEFAULT_GROUP_NAME` is created that every
+  user joins as a member. Members can only read; the user with that email owns it and can write. If that user
+  doesn't exist yet, they become owner on their first login. Without `SHARED_GROUP_OWNER` no shared group is created.
+- The setup runs once (on the next start or `bin/init.sh`). Afterwards the group is managed like any other:
+  changes to owner, admins or `.env` don't undo each other. More writers:
+  `bin/set-group-role.sh <groupID> <username> admin`.
+- Storage quota for new users comes from `ZOTERO_STORAGE_QUOTA_MB` (default: unlimited).
 
-*Run*:
+## Desktop client
+
+Use the official Zotero client. In Settings → Advanced → Config Editor set:
+
+| Preference | Value |
+| --- | --- |
+| `extensions.zotero.api.url` | `ZOTERO_API_URL` with trailing `/`, e.g. `https://api.zotero.example.org/` |
+| `extensions.zotero.streaming.url` | `STREAMING_URL`, e.g. `wss://stream.zotero.example.org/` |
+
+Restart Zotero, then click "Log In" under Settings → Account (older versions: Sync). The browser opens the
+portal login. Texts such as "Sync with zotero.org" and links to the zotero.org website stay unchanged.
+
+## Data and backups
+
+All state is in bind mounts under `data/`, so a file-level backup of that directory (with the stack stopped,
+or a MySQL dump plus `data/garage/`) is enough.
+
+- `data/mysql/`: databases
+- `data/garage/`: attachment files and full text
+- `data/backups/`: dumps written by `db-migrate` before every schema change (root only)
+- `data/legacy/`: legacy export to import (see below)
+
+Restore a dump:
+
 ```bash
-$ ./staging/Zotero_VERSION/zotero(.exe)
+zcat data/backups/<file>.sql.gz | docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
 ```
 
-*Connect with the default user and password*:
+## Updating
 
-| Name          | Login                    | Password           |
-| ------------- | ------------------------ | ------------------ |
-| Zotero        | admin                    | admin              |
+Upstream sources are pinned: web-library to a release tag, dataserver, stream-server and tinymce-clean-server
+(which have no release tags) to a master commit. The pins are in `versions.lock` and the submodule pointers.
 
-## deployment
+```bash
+./utils/update.sh                           # pinned versions and what upstream offers
+./utils/update.sh dataserver master         # pin a submodule to a tag, branch or commit; checks the patches
+./utils/update.sh web-library v1.8.3
+docker compose up -d --build                # db-migrate migrates the databases, with a backup first
+./utils/smoke-test.py
+```
 
-For personal usage, you can run the server and client in the same machine and
-it should be working. The source code is modified for that.
+`db-migrate` checks every known schema change against the database and applies what is missing, so it works
+from any older version. When upstream adds a new directory to `src/server/dataserver/misc/db-updates/`, add a
+matching step to `config/dataserver-scripts/migrate.sh`. New item types and fields are applied automatically
+(`admin/schema_update`).
 
-For intranet usage, change the client side's url, replace localhost with server
-IP.
+To change a patch, check out the `selfhost` branch in `src/server/dataserver` (or apply the patches
+with `utils/patch.sh`), commit, and regenerate the files with `git format-patch -o ../../patches/dataserver origin/master`.
 
-For internet usage, you can setup a website with ssl enabled, and use reverse 
-proxy to get it back to internal servers. Of course, you can enable SSL and deploy
-it directly in external servers, but I have not tried that.
+## Upgrading from the 2021 package
 
-## server management
+In the same checkout, with the old containers still present:
 
-There are no user management interface for now. You can use the script
-./bin/create-user.sh to add some users.
+```bash
+git pull
+git submodule sync && git submodule update --init --recursive
+./utils/setup-env.sh <public-host>
+sudo legacy/export.sh               # old databases and MinIO files -> data/legacy/
+docker compose up -d --build        # db-migrate imports and migrates the database
+./bin/init.sh                       # Garage setup; s3-import uploads the files
+```
 
-## TODO
+The old stack kept its data in anonymous container volumes, and MySQL 8.4 can't open a 5.7 data directory,
+so `legacy/export.sh` dumps the databases and copies the files first. Details in [README-upgrade.md](README-upgrade.md).
 
-* Add web-library and user management interface. Web-library is working with
-correct setting of urls, user & key. A simple login/register interface will
-bring the experience almost the same with the official one.
+## Known limitations
+
+- No server-side full-text search (web-library "All Fields & Tags + full text"). Full text is stored and synced.
+- No self-service registration beyond what the OIDC provider allows.
+- The web-library downloads fonts, styles and prebuilt reader and note-editor modules from zotero.org at image build time,
+  and citation styles at runtime.
+- Translation server (adding items by identifier in the web-library) is not included.
