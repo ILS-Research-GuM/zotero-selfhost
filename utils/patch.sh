@@ -1,38 +1,15 @@
-#!/bin/bash
+#!/bin/sh
+# Usage: utils/patch.sh [--check]
+# Patches are applied at image build time (docker/dataserver/Dockerfile).
+# This applies them to the dataserver submodule for development, or with --check only tests them.
+set -e
+cd "$(dirname "$0")/../src/server/dataserver"
 
-SCRIPT=$(readlink -f "$0")
-BASEDIR=$(dirname "$SCRIPT")/..
-
-cd $BASEDIR
-
-patch_dataserver=1
-patch_zotero_client=1
-patch_web_library=1
-
-if [ $patch_dataserver == 1 ] ; then
-  cd src/server/dataserver
-  for p in ${BASEDIR}/src/patches/dataserver/*.patch; do
-    echo $p
-    patch -p 1 < $p
-  done
-  cd ./include && tar -xzvf ${BASEDIR}/src/patches/dataserver/Zend.tar.gz
-  cd $BASEDIR
-fi
-
-if [ $patch_zotero_client == 1 ] ; then
-  cd src/client/zotero-client
-  for p in ${BASEDIR}/src/patches/zotero-client/*.patch; do
-    echo $p
-    patch -p 1 < $p
-  done
-  cd $BASEDIR
-fi
-
-if [ $patch_web_library == 1 ] ; then
-  cd src/server/web-library
-  for p in ${BASEDIR}/src/patches/web-library/*.patch; do
-    echo $p
-    patch -p 1 < $p
-  done
-  cd $BASEDIR
-fi
+for p in ../../patches/dataserver/*.patch; do
+	if [ "$1" = "--check" ]; then
+		git apply --check "$p" || { echo "Patch no longer applies: $p" >&2; exit 1; }
+	else
+		git apply "$p"
+	fi
+done
+echo "Patches OK"
