@@ -142,7 +142,9 @@ def run_tests(userID, key):
 	lib = f'/users/{userID}'
 
 	status, _, groups = api('GET', f'{lib}/groups', key=key)
-	check('Group libraries listed', status == 200 and len(groups) > 0, f"{status} {groups}")
+	# Without SHARED_GROUP_OWNER there is no shared group, so an empty list is fine then
+	check('Group libraries listed', status == 200 and (len(groups) > 0 or not ENV.get('SHARED_GROUP_OWNER')),
+		f"{status} {groups}")
 
 	status, _, res = api('POST', f'{lib}/items', [
 		{'itemType': 'book', 'title': 'Smoke test book', 'creators': [{'creatorType': 'author', 'firstName': 'Ada', 'lastName': 'Lovelace'}]},
@@ -159,12 +161,17 @@ def run_tests(userID, key):
 
 	if groups:
 		g = groups[0]['data']
+		canWrite = (g['libraryEditing'] == 'members' or g.get('owner') == userID
+			or userID in g.get('admins', []))
 		status, _, res = api('POST', f"/groups/{g['id']}/items", [{'itemType': 'journalArticle', 'title': 'Smoke test'}], key=key)
-		check('Item created in group library', status == 200 and not res['failed'], f"{status} {res}")
-		if status == 200 and res['successful']:
-			gKey = list(res['successful'].values())[0]['key']
-			api('DELETE', f"/groups/{g['id']}/items/{gKey}", key=key,
-				headers={'If-Unmodified-Since-Version': str(list(res['successful'].values())[0]['version'])})
+		if canWrite:
+			check('Item created in group library', status == 200 and not res['failed'], f"{status} {res}")
+			if status == 200 and res['successful']:
+				gKey = list(res['successful'].values())[0]['key']
+				api('DELETE', f"/groups/{g['id']}/items/{gKey}", key=key,
+					headers={'If-Unmodified-Since-Version': str(list(res['successful'].values())[0]['version'])})
+		else:
+			check('Read-only group rejects writes from members', status == 403, f"{status} {res}")
 
 	# File upload as the client does it: request, POST to S3, register, download
 	content = f'%PDF-1.4 smoke test {time.time()}\n'.encode()

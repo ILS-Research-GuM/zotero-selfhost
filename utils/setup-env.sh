@@ -47,8 +47,11 @@ ZOTERO_ADMIN_PASSWORD=$(pw)
 ZOTERO_ADMIN_EMAIL=admin@localhost
 # Storage quota per new user in MB (1000000 = unlimited)
 ZOTERO_STORAGE_QUOTA_MB=1000000
-# Group all new users join (created by bin/init.sh as group 1)
+# Shared group every user joins, set up once if SHARED_GROUP_OWNER is set: named
+# DEFAULT_GROUP_NAME, read-only for members, owned by the user with that email (more writers:
+# bin/set-group-role.sh). Empty: no shared group.
 DEFAULT_GROUP_NAME=Shared
+SHARED_GROUP_OWNER=
 
 # Keycloak login for the web-library and the desktop client (portal service)
 OIDC_ISSUER=

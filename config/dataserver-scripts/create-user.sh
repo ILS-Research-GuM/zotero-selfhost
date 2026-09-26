@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: create-user.sh <username> <password> <email>
-# New users also join group 1 (DEFAULT_GROUP_NAME) as members if it exists.
+# New users also join the shared group (see apply-shared-group.sh) as members if there is one.
 # Storage quota comes from ZOTERO_STORAGE_QUOTA_MB (default: unlimited).
 set -e
 
@@ -33,8 +33,9 @@ INSERT INTO zotero_shard_1.shardLibraries (libraryID, libraryType) VALUES (@lib,
 -- Quota in MB; 1000000 means unlimited. TIMESTAMP columns end in 2038.
 INSERT INTO zotero_master.storageAccounts (userID, quota, expiration)
 	VALUES ($USERID, $QUOTA, '2038-01-01 00:00:00');
-INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
-	SELECT 1, $USERID, 'member', CURRENT_TIMESTAMP FROM zotero_master.\`groups\` WHERE groupID = 1;
 EOF
+# The settings table only exists once a shared group was set up
+$MYSQL -e "INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
+	SELECT value, $USERID, 'member', CURRENT_TIMESTAMP FROM zotero_selfhost.settings WHERE name = 'sharedGroupID'" 2>/dev/null || true
 
 echo "Created user '$USERNAME' with userID $USERID"
