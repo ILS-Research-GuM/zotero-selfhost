@@ -12,7 +12,7 @@ obsolete, and what is still open. Day-to-day usage is described in [README.md](R
 - **No AWS services.** S3 is provided by [Garage](https://garagehq.deuxfleurs.fr/). SNS, SQS, DynamoDB and Elasticsearch are no longer required.
 - **No custom client build.** The official Zotero desktop client syncs against the server after setting two preferences.
 - One container per service. Upstream sources stay untouched as submodules, and changes are applied as patch files at image build time.
-- New, optional **portal** service: OpenID Connect login (e.g. Keycloak), automatic user provisioning, a per-user web-library, and the desktop client's browser-based login.
+- New **portal** service: login with OpenID Connect (e.g. Keycloak), with username and password, or both side by side; automatic user provisioning, a per-user web-library, and the desktop client's browser-based login.
 
 ## Versions
 
@@ -221,7 +221,11 @@ Current clients log in through the browser:
 
 On zotero.org, zotero.org itself is that website. Here the `portal` service takes that role:
 
-- **Login:** OpenID Connect against any provider (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`).
+- **Login:** OpenID Connect against any provider (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`), or
+  username and password of the Zotero account if `OIDC_ISSUER` is empty. With `PASSWORD_LOGIN=true` both run
+  side by side: the sign-in page has a button for the OIDC login (`OIDC_LABEL`) and the password form, e.g. for
+  external users created with `bin/create-user.sh`. The password check accepts the dataserver's hashes (bcrypt,
+  salted SHA1, MD5); failed attempts are delayed.
 - **User provisioning:** a Zotero user is created on first login and linked through the OIDC `sub` in `zotero_www.users_meta`. An unlinked local account with the same email is taken over.
 - **web-library:** served per user with an API key of their own.
 - **Desktop login:**
@@ -242,7 +246,7 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 | `bin/create-api-key.sh` | Create an API key with username and password |
 | `utils/update.sh [name ref \| --verify]` | Show pinned and upstream versions, pin a submodule to a tag or commit (checks patches, updates `versions.lock` and `WEB_LIBRARY_COMMIT`) |
 | `utils/patch.sh [--check]` | Test the patches or apply them to the dataserver submodule |
-| `utils/smoke-test.py [--public]` | End-to-end check with 25 checks, `--public` goes through the client-facing URLs |
+| `utils/smoke-test.py [--public]` | End-to-end check with 25 to 30 checks, depending on the login mode, `--public` goes through the client-facing URLs |
 
 ## Previous README: what still applies
 
@@ -280,7 +284,7 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 
 ## Tests
 
-`utils/smoke-test.py` passes all 25 checks, both locally and through a TLS reverse proxy (`--public`):
+`utils/smoke-test.py` passes all checks (25 with OIDC only, 30 with OIDC and password login), both locally and through a TLS reverse proxy (`--public`):
 
 - Schema, login (including a wrong password)
 - Items, notes (tinymce-clean), group library
@@ -289,8 +293,10 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 - Streaming push after a change
 - Deletion
 - web-library assets, PDF reader modules served as JavaScript
-- portal without a real login: redirect to the OIDC provider (client ID, redirect URI), for the web-library and
-  the desktop client login; callback with an unknown state rejected; background requests get 401
+- portal with OIDC, without a real login: redirect to the OIDC provider (client ID, redirect URI), for the
+  web-library and the desktop client login; callback with an unknown state rejected; background requests get 401
+- portal with password login: sign-in page, wrong password and missing CSRF token rejected, login as the admin
+  user back to the desktop client login, web-library page with the user's configuration
 
 The portal's provisioning and the desktop login session were tested directly against the API.
 The OIDC login and the web-library were tested in a browser.
@@ -333,7 +339,8 @@ instead of living on as a diverging fork.
 - **Keep it deployment-neutral:**
   - no host names, no identity provider and no reverse proxy config of a specific site
   - a `.env.example` next to `utils/setup-env.sh`
-  - the portal behind a Compose profile, so the base stack runs without an OIDC provider
+  - ~~the portal behind a Compose profile, so the base stack runs without an OIDC provider~~: the portal now
+    has a password login and runs without an OIDC provider
 - **Automatic database migrations:** done (`db-migrate`, see above). For the PR, a check in CI that every
   upstream `db-updates` directory has a matching step would keep it from falling behind.
 - **Migration path for existing installations of the previous package:** done (`legacy/export.sh`,

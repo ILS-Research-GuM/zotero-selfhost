@@ -1,5 +1,6 @@
 <?php
-// Maps Keycloak users to Zotero users and API keys, creating them on first login
+// Maps OIDC users to Zotero users and API keys, creating them on first login, and checks
+// passwords for the login without OIDC
 
 class Accounts {
 	private mysqli $db;
@@ -47,6 +48,29 @@ class Accounts {
 			throw $e;
 		}
 		return $user;
+	}
+
+	/**
+	 * Checks a username or email and password like the dataserver does (bcrypt, salted SHA1 or
+	 * MD5 from older installations). Returns ['userID' => ..., 'username' => ...] or null.
+	 */
+	public function verifyPassword(string $login, string $password): ?array {
+		if ($login === '' || $password === '') {
+			return null;
+		}
+		$result = $this->query(
+			"SELECT u.userID, u.username, u.password FROM zotero_www.users u WHERE u.username = ?
+			UNION SELECT u.userID, u.username, u.password FROM zotero_www.users u JOIN zotero_www.users_email e USING (userID)
+				WHERE e.email = ?", [$login, $login]);
+		$salt = (string) getenv('ZOTERO_AUTH_SALT');
+		foreach ($result->fetch_all(MYSQLI_ASSOC) as $row) {
+			$hash = $row['password'];
+			if (password_verify($password, $hash) || hash_equals($hash, sha1($salt . $password))
+					|| hash_equals($hash, md5($password))) {
+				return ['userID' => (int) $row['userID'], 'username' => $row['username']];
+			}
+		}
+		return null;
 	}
 
 	/**

@@ -1,5 +1,7 @@
 <?php
-// Keycloak login in front of the web-library and the desktop client's browser login
+// Login in front of the web-library and the desktop client's browser login: an OIDC provider
+// (e.g. Keycloak) if OIDC_ISSUER is set, username and password of the Zotero account if
+// PASSWORD_LOGIN is on (default: only without OIDC), or both side by side
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/Accounts.php';
 
@@ -7,8 +9,13 @@ use Jumbojett\OpenIDConnectClient;
 
 $baseURL = rtrim(getenv('WEB_LIBRARY_URL'), '/');
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$useOIDC = getenv('OIDC_ISSUER') != '';
+$passwordLogin = getenv('PASSWORD_LOGIN') != ''
+	? filter_var(getenv('PASSWORD_LOGIN'), FILTER_VALIDATE_BOOLEAN)
+	: !$useOIDC;
 
-session_set_cookie_params(['secure' => true, 'httponly' => true, 'samesite' => 'Lax']);
+// Secure cookies only work over HTTPS; plain HTTP setups without a reverse proxy need them off
+session_set_cookie_params(['secure' => str_starts_with($baseURL, 'https:'), 'httponly' => true, 'samesite' => 'Lax']);
 session_name('zotero_portal');
 session_start();
 
@@ -35,10 +42,25 @@ function page(string $title, string $body, int $status = 200): never {
 }
 
 /**
- * Redirects to Keycloak. Each pending login keeps its own state, nonce and return target,
- * so several tabs or reloads during login don't invalidate each other.
+ * Redirects to the login: the sign-in page if password login is on (it also offers the OIDC
+ * login), otherwise straight to the OIDC provider
  */
 function startLogin(string $returnTo): never {
+	global $passwordLogin, $baseURL;
+	if ($passwordLogin) {
+		$_SESSION['returnTo'] = $returnTo;
+		header("Location: $baseURL/signin");
+		exit;
+	}
+	oidcLogin($returnTo);
+}
+
+/**
+ * Redirects to the OIDC provider. Each pending login keeps its own state, nonce and return
+ * target, so several tabs or reloads during login don't invalidate each other.
+ */
+function oidcLogin(string $returnTo): never {
+	global $baseURL;
 	$discovery = json_decode(@file_get_contents(rtrim(getenv('OIDC_ISSUER'), '/') . '/.well-known/openid-configuration'), true);
 	if (empty($discovery['authorization_endpoint'])) {
 		error_log('OIDC discovery failed');
@@ -50,7 +72,6 @@ function startLogin(string $returnTo): never {
 	$nonce = bin2hex(random_bytes(16));
 	$pending[$state] = ['nonce' => $nonce, 'returnTo' => $returnTo, 'time' => time()];
 	$_SESSION['oidcPending'] = $pending;
-	global $baseURL;
 	header('Location: ' . $discovery['authorization_endpoint'] . '?' . http_build_query([
 		'response_type' => 'code',
 		'client_id' => getenv('OIDC_CLIENT_ID'),
@@ -67,8 +88,46 @@ if ($path === '/favicon.ico') {
 	exit;
 }
 
-// Return from Keycloak
-if ($path === '/oidc/callback') {
+// OIDC login chosen on the sign-in page
+if ($path === '/oidc/start' && $useOIDC) {
+	oidcLogin($_SESSION['returnTo'] ?? '/');
+}
+
+// Sign-in page with the password form, and a button for the OIDC login if both are on
+if ($path === '/signin' && $passwordLogin) {
+	$error = '';
+	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+		if (!hash_equals($_SESSION['signinCsrf'] ?? '', $_POST['csrf'] ?? '')) {
+			page('Anfrage abgelehnt', '<p>Das Formular war ungültig. <a href="/signin">Erneut versuchen</a></p>', 403);
+		}
+		$user = (new Accounts())->verifyPassword((string) ($_POST['username'] ?? ''), (string) ($_POST['password'] ?? ''));
+		if ($user) {
+			session_regenerate_id(true);
+			unset($_SESSION['signinCsrf']);
+			$_SESSION['user'] = $user;
+			$returnTo = $_SESSION['returnTo'] ?? '/';
+			unset($_SESSION['returnTo']);
+			header('Location: ' . $baseURL . $returnTo);
+			exit;
+		}
+		// Slow down password guessing
+		sleep(2);
+		http_response_code(401);
+		$error = '<p><b>Benutzername oder Passwort ist falsch.</b></p>';
+	}
+	$_SESSION['signinCsrf'] = $_SESSION['signinCsrf'] ?? bin2hex(random_bytes(16));
+	$oidcButton = !$useOIDC ? '' : '<form action="/oidc/start"><p><button>Anmelden mit '
+		. htmlspecialchars(getenv('OIDC_LABEL') ?: 'Single Sign-On') . '</button></p></form><hr>'
+		. '<p>Oder mit Benutzername und Passwort:</p>';
+	page('Anmelden', $oidcButton . $error
+		. '<form method="post"><input type="hidden" name="csrf" value="' . $_SESSION['signinCsrf'] . '">'
+		. '<p><label>Benutzername oder E-Mail<br><input name="username" autocomplete="username" required autofocus></label></p>'
+		. '<p><label>Passwort<br><input name="password" type="password" autocomplete="current-password" required></label></p>'
+		. '<p><button>Anmelden</button></p></form>', http_response_code() ?: 200);
+}
+
+// Return from the OIDC provider
+if ($path === '/oidc/callback' && $useOIDC) {
 	$state = (string) ($_GET['state'] ?? '');
 	$pending = $_SESSION['oidcPending'][$state] ?? null;
 	if (!$pending) {
@@ -93,7 +152,7 @@ if ($path === '/oidc/callback') {
 	}
 	catch (Throwable $e) {
 		error_log("OIDC login failed: " . $e->getMessage());
-		page('Anmeldung fehlgeschlagen', '<p>Die Anmeldung über Keycloak ist fehlgeschlagen. <a href="/">Erneut versuchen</a></p>', 401);
+		page('Anmeldung fehlgeschlagen', '<p>Die Anmeldung ist fehlgeschlagen. <a href="/">Erneut versuchen</a></p>', 401);
 	}
 	session_regenerate_id(true);
 	$returnTo = $_SESSION['returnTo'] ?? '/';
@@ -105,14 +164,14 @@ if ($path === '/oidc/callback') {
 if ($path === '/logout') {
 	$idToken = $_SESSION['idToken'] ?? null;
 	session_destroy();
-	if ($idToken) {
+	if ($idToken && $useOIDC) {
 		oidc()->signOut($idToken, "$baseURL/");
 	}
 	header("Location: $baseURL/");
 	exit;
 }
 
-// Everything else requires a Keycloak login
+// Everything else requires a login
 if (empty($_SESSION['user'])) {
 	// Only page loads start a login, not background requests
 	if (isset($_SERVER['HTTP_SEC_FETCH_MODE']) && $_SERVER['HTTP_SEC_FETCH_MODE'] !== 'navigate') {
@@ -126,7 +185,8 @@ if (empty($_SESSION['user'])) {
 
 $accounts = new Accounts();
 $u = $_SESSION['user'];
-$user = $accounts->getOrCreateUser($u['sub'], $u['username'], $u['email']);
+// Password logins already know the Zotero user; OIDC logins are mapped (and created on first login)
+$user = isset($u['userID']) ? $u : $accounts->getOrCreateUser($u['sub'], $u['username'], $u['email']);
 $name = htmlspecialchars($user['username']);
 
 // Desktop client login: Zotero opens /login?session=<token> in the browser
@@ -141,7 +201,7 @@ if ($path === '/login') {
 	}
 	// A client that was linked to an account before may only log in to that account again
 	if (!empty($info['userID']) && (int) $info['userID'] !== (int) $user['userID']) {
-		page('Anderes Konto', '<p>Dieses Zotero ist mit einem anderen Konto verbunden. Melde dich bei Keycloak mit diesem Konto an oder setze die Verknüpfung in Zotero zurück.</p>', 403);
+		page('Anderes Konto', '<p>Dieses Zotero ist mit einem anderen Konto verbunden. Melde dich mit diesem Konto an oder setze die Verknüpfung in Zotero zurück.</p>', 403);
 	}
 
 	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
