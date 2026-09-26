@@ -33,5 +33,6 @@ EOF
 (cd ../admin && php schema_update > /dev/null 2>&1)
 
 ./create-user.sh "${ZOTERO_ADMIN_USER:-admin}" "${ZOTERO_ADMIN_PASSWORD:?ZOTERO_ADMIN_PASSWORD not set}" "${ZOTERO_ADMIN_EMAIL:-admin@localhost}"
-# Group every new user joins as member; with "admins" members can only read
-./create-group.sh "${DEFAULT_GROUP_NAME:-Shared}" "${ZOTERO_ADMIN_USER:-admin}" "${DEFAULT_GROUP_EDITING:-members}"
+# Group every new user joins as member; SHARED_GROUP_OWNER makes it read-only with that owner
+./create-group.sh "${DEFAULT_GROUP_NAME:-Shared}" "${ZOTERO_ADMIN_USER:-admin}"
+./apply-shared-group.sh

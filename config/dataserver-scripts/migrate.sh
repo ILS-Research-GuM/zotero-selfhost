@@ -392,4 +392,5 @@ if ! has_db zotero_master; then
 fi
 run_migrations
 update_zotero_schema
+./apply-shared-group.sh
 log "Done"

@@ -39,6 +39,7 @@ class Accounts {
 			}
 			$this->query("INSERT INTO zotero_www.users_meta (userID, metaKey, metaValue) VALUES (?, 'keycloakSub', ?)",
 				[$user['userID'], $sub]);
+			$this->claimSharedGroup((int) $user['userID'], $email);
 			$this->db->commit();
 		}
 		catch (Throwable $e) {
@@ -68,6 +69,31 @@ class Accounts {
 		$this->query("REPLACE INTO zotero_www.users_meta (userID, metaKey, metaValue) VALUES (?, 'webLibraryKey', ?)",
 			[$userID, $json['key']]);
 		return $json['key'];
+	}
+
+	/**
+	 * Makes the SHARED_GROUP_OWNER user owner of group 1 on their first login, like
+	 * Zotero_Group::save() does (the previous owner becomes admin). At startup db-migrate
+	 * does the same for users that already exist (apply-shared-group.sh).
+	 */
+	private function claimSharedGroup(int $userID, string $email): void {
+		$owner = getenv('SHARED_GROUP_OWNER');
+		if (!$owner || strcasecmp($owner, $email) != 0) {
+			return;
+		}
+		$this->query("UPDATE zotero_master.groupUsers SET role = 'admin' WHERE groupID = 1 AND role = 'owner' AND userID != ?",
+			[$userID]);
+		$this->query("INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
+			SELECT 1, ?, 'owner', CURRENT_TIMESTAMP FROM zotero_master.`groups` WHERE groupID = 1
+			ON DUPLICATE KEY UPDATE role = 'owner', lastUpdated = CURRENT_TIMESTAMP", [$userID]);
+		// The dataserver caches the owner in memcached under its API URL as key prefix
+		$prefix = rtrim(getenv('ZOTERO_API_URL'), '/') . '/';
+		$mc = @fsockopen('memcached', 11211, $errno, $errstr, 2);
+		if ($mc) {
+			fwrite($mc, "delete {$prefix}groupData_1\r\n");
+			fgets($mc);
+			fclose($mc);
+		}
 	}
 
 	private function createUser(string $username, string $email): array {

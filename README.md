@@ -62,7 +62,7 @@ Requires Docker with the Compose plugin. Run the commands as a user allowed to u
 ```bash
 git clone --recursive <repository url> zotero-selfhost && cd zotero-selfhost
 ./utils/setup-env.sh zotero.example.org   # host name clients use; creates .env with random secrets
-# edit .env: public URLs, OIDC_* (see below), DEFAULT_GROUP_*
+# edit .env: public URLs, OIDC_* (see below), DEFAULT_GROUP_NAME, SHARED_GROUP_OWNER
 docker compose up -d --build
 ./bin/init.sh                             # one-time: S3 buckets and CORS, databases, admin user, default group
 ./utils/smoke-test.py                     # optional end-to-end check
@@ -125,8 +125,11 @@ Users are normally created by the portal on first login. By hand:
 ```
 
 - Every new user joins group 1 as a member. `bin/init.sh` creates it as `DEFAULT_GROUP_NAME`.
-- `DEFAULT_GROUP_EDITING=members` lets all members write. With `admins`, members can only read; make
-  individual users writers with `bin/set-group-role.sh <groupID> <username> admin`.
+- Without `SHARED_GROUP_OWNER` all members can write.
+- `SHARED_GROUP_OWNER=<email>` makes the group read-only for members and binds it to the user with that email:
+  they become its owner and can write. If that user doesn't exist yet, they become owner on their first login.
+  The setting is applied on every start (`db-migrate`); the previous owner becomes admin.
+  Further writers: `bin/set-group-role.sh <groupID> <username> admin`.
 - Storage quota for new users comes from `ZOTERO_STORAGE_QUOTA_MB` (default: unlimited).
 
 ## Desktop client
