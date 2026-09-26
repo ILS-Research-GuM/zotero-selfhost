@@ -186,6 +186,10 @@ def run_tests(userID, key):
 	if check('Download redirects to presigned URL', status == 302 and location.startswith(ENV['S3_PUBLIC_URL']), f"{status} {location}"):
 		status, _, body = request('GET', location, host=S3_LOCAL)
 		check('Downloaded file matches upload', status == 200 and body == content, status)
+	# The web-library opens attachments via the view URL
+	status, _, body = api('GET', f'{lib}/items/{attKey}/file/view/url', key=key)
+	viewURL = (body.decode() if isinstance(body, bytes) else str(body)).strip()
+	check('View URL is a presigned S3 URL', status == 200 and viewURL.startswith(ENV['S3_PUBLIC_URL']), f"{status} {viewURL[:80]}")
 
 	status, _, _ = api('PUT', f'{lib}/items/{attKey}/fulltext', {'content': 'smoke test full text', 'indexedPages': 1, 'totalPages': 1}, key=key)
 	check('Full text stored', status == 204, status)
@@ -224,9 +228,12 @@ ws.onmessage = (m) => {
 		headers={'If-Unmodified-Since-Version': str(api('GET', f'{lib}/items?limit=1', key=key)[1]['Last-Modified-Version'])})
 	check('Items deleted', status == 204, status)
 
-	# web-library build
+	# The page itself needs an OIDC login (portal); check the static assets
 	status, headers, _ = request('GET', WEB + '/static/web-library/zotero-web-library.js')
 	check('web-library assets served', status == 200, status)
+	status, headers, _ = request('GET', WEB + '/static/web-library/reader/pdf/build/pdf.mjs')
+	check('PDF viewer modules served as JavaScript',
+		status == 200 and 'javascript' in headers.get('Content-Type', ''), f"{status} {headers.get('Content-Type')}")
 
 
 main()

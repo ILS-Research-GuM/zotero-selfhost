@@ -21,6 +21,15 @@ for bucket in zotero zotero-fulltext; do
 	garage bucket allow --read --write --owner "$bucket" --key "$S3_ACCESS_KEY"
 done
 
+# Let the web-library fetch attachments directly from S3
+echo "Setting bucket CORS for $WEB_LIBRARY_URL..."
+CORS="{\"CORSRules\":[{\"AllowedOrigins\":[\"$WEB_LIBRARY_URL\"],\"AllowedMethods\":[\"GET\",\"HEAD\",\"POST\"],\"AllowedHeaders\":[\"*\"],\"ExposeHeaders\":[\"ETag\"],\"MaxAgeSeconds\":3600}]}"
+for bucket in zotero zotero-fulltext; do
+	docker run --rm --network host -e AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+		-e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli --endpoint-url "http://127.0.0.1:${S3_PORT:-8182}" \
+		s3api put-bucket-cors --bucket "$bucket" --cors-configuration "$CORS"
+done
+
 echo "Setting up databases..."
 $DC exec -T dataserver /var/www/zotero/misc/init-mysql.sh
 
