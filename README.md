@@ -124,12 +124,12 @@ Users are normally created by the portal on first login. By hand:
 ./bin/create-api-key.sh <username> <password> [key-name]
 ```
 
-- Every new user joins group 1 as a member. `bin/init.sh` creates it as `DEFAULT_GROUP_NAME`.
-- Without `SHARED_GROUP_OWNER` all members can write.
-- `SHARED_GROUP_OWNER=<email>` makes the group read-only for members and binds it to the user with that email:
-  they become its owner and can write. If that user doesn't exist yet, they become owner on their first login.
-  The setting is applied on every start (`db-migrate`); the previous owner becomes admin.
-  Further writers: `bin/set-group-role.sh <groupID> <username> admin`.
+- **Shared group:** with `SHARED_GROUP_OWNER=<email>`, a group named `DEFAULT_GROUP_NAME` is created that every
+  user joins as a member. Members can only read; the user with that email owns it and can write. If that user
+  doesn't exist yet, they become owner on their first login. Without `SHARED_GROUP_OWNER` no shared group is created.
+- The setup runs once (on the next start or `bin/init.sh`). Afterwards the group is managed like any other:
+  changes to owner, admins or `.env` don't undo each other. More writers:
+  `bin/set-group-role.sh <groupID> <username> admin`.
 - Storage quota for new users comes from `ZOTERO_STORAGE_QUOTA_MB` (default: unlimited).
 
 ## Desktop client

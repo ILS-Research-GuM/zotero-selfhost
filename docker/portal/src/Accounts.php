@@ -72,27 +72,46 @@ class Accounts {
 	}
 
 	/**
-	 * Makes the SHARED_GROUP_OWNER user owner of group 1 on their first login, like
-	 * Zotero_Group::save() does (the previous owner becomes admin). At startup db-migrate
-	 * does the same for users that already exist (apply-shared-group.sh).
+	 * Hands the shared group over to the SHARED_GROUP_OWNER user on their first login, if
+	 * apply-shared-group.sh couldn't because they didn't exist yet. Like Zotero_Group::save(),
+	 * the previous owner becomes admin. Happens once; later changes to the group are kept.
 	 */
 	private function claimSharedGroup(int $userID, string $email): void {
-		$owner = getenv('SHARED_GROUP_OWNER');
-		if (!$owner || strcasecmp($owner, $email) != 0) {
+		$groupID = $this->sharedGroupID();
+		$pending = $groupID ? $this->setting('sharedGroupPendingOwner') : null;
+		if (!$pending || $email === '' || strcasecmp($pending, $email) != 0) {
 			return;
 		}
-		$this->query("UPDATE zotero_master.groupUsers SET role = 'admin' WHERE groupID = 1 AND role = 'owner' AND userID != ?",
-			[$userID]);
-		$this->query("INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
-			SELECT 1, ?, 'owner', CURRENT_TIMESTAMP FROM zotero_master.`groups` WHERE groupID = 1
-			ON DUPLICATE KEY UPDATE role = 'owner', lastUpdated = CURRENT_TIMESTAMP", [$userID]);
+		$this->query("DELETE FROM zotero_selfhost.settings WHERE name = 'sharedGroupPendingOwner'");
+		$this->query("UPDATE zotero_master.groupUsers SET role = 'admin' WHERE groupID = ? AND role = 'owner' AND userID != ?",
+			[$groupID, $userID]);
+		$this->query("INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined) VALUES (?, ?, 'owner', CURRENT_TIMESTAMP)
+			ON DUPLICATE KEY UPDATE role = 'owner', lastUpdated = CURRENT_TIMESTAMP", [$groupID, $userID]);
 		// The dataserver caches the owner in memcached under its API URL as key prefix
 		$prefix = rtrim(getenv('ZOTERO_API_URL'), '/') . '/';
 		$mc = @fsockopen('memcached', 11211, $errno, $errstr, 2);
 		if ($mc) {
-			fwrite($mc, "delete {$prefix}groupData_1\r\n");
+			fwrite($mc, "delete {$prefix}groupData_$groupID\r\n");
 			fgets($mc);
 			fclose($mc);
+		}
+	}
+
+	/**
+	 * ID of the group every user joins (set up by apply-shared-group.sh), or null
+	 */
+	private function sharedGroupID(): ?int {
+		$id = $this->setting('sharedGroupID');
+		return $id ? (int) $id : null;
+	}
+
+	private function setting(string $name): ?string {
+		try {
+			return $this->row("SELECT value FROM zotero_selfhost.settings WHERE name = ?", [$name])['value'] ?? null;
+		}
+		catch (mysqli_sql_exception $e) {
+			// The table exists once a shared group was set up
+			return null;
 		}
 	}
 
@@ -111,9 +130,11 @@ class Accounts {
 		$this->query("INSERT INTO zotero_shard_1.shardLibraries (libraryID, libraryType) VALUES (?, 'user')", [$libraryID]);
 		$this->query("INSERT INTO zotero_master.storageAccounts (userID, quota, expiration) VALUES (?, ?, '2038-01-01 00:00:00')",
 			[$userID, (int) (getenv('ZOTERO_STORAGE_QUOTA_MB') ?: 1000000)]);
-		// Same as bin/create-user.sh: new users join group 1 (DEFAULT_GROUP_NAME) as members
-		$this->query("INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
-			SELECT 1, ?, 'member', CURRENT_TIMESTAMP FROM zotero_master.`groups` WHERE groupID = 1", [$userID]);
+		// Same as bin/create-user.sh: new users join the shared group as members, if there is one
+		if ($groupID = $this->sharedGroupID()) {
+			$this->query("INSERT INTO zotero_master.groupUsers (groupID, userID, role, joined)
+				VALUES (?, ?, 'member', CURRENT_TIMESTAMP)", [$groupID, $userID]);
+		}
 		return ['userID' => $userID, 'username' => $username];
 	}
 

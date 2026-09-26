@@ -110,7 +110,9 @@ def run_tests(userID, key):
 	lib = f'/users/{userID}'
 
 	status, _, groups = api('GET', f'{lib}/groups', key=key)
-	check('Group libraries listed', status == 200 and len(groups) > 0, f"{status} {groups}")
+	# Without SHARED_GROUP_OWNER there is no shared group, so an empty list is fine then
+	check('Group libraries listed', status == 200 and (len(groups) > 0 or not ENV.get('SHARED_GROUP_OWNER')),
+		f"{status} {groups}")
 
 	status, _, res = api('POST', f'{lib}/items', [
 		{'itemType': 'book', 'title': 'Smoke test book', 'creators': [{'creatorType': 'author', 'firstName': 'Ada', 'lastName': 'Lovelace'}]},

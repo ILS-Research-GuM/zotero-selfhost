@@ -107,7 +107,7 @@ Server-side API compatibility was verified for the Zotero client at `zotero/zote
 - **Ports:** configurable, bound to `BIND_ADDRESS` (default `127.0.0.1`). Defaults changed from 8080–8083 to 8180–8184.
 - **MySQL:** configured after upstream's `misc/mysql_parameters`, with `sql_mode = STRICT_ALL_TABLES` and utf8mb4. The previous `sql_mode = ''` workaround and `innodb_large_prefix` (removed in MySQL 8) are gone.
 - **Apache in the dataserver:** `include_path` must contain `include/` and `auto_prepend_file` must point to `include/header.inc.php`. Without them every API request fails.
-- **Default group:** `bin/init.sh` creates group 1 as `DEFAULT_GROUP_NAME` (default `Shared`). New users join it as members. `SHARED_GROUP_OWNER=<email>` makes it read-only for members and gives ownership to the user with that email, applied on every start by `db-migrate` or on that user's first login by the portal. More writers: `bin/set-group-role.sh`.
+- **Shared group:** only with `SHARED_GROUP_OWNER=<email>`. Then a group named `DEFAULT_GROUP_NAME` is created once (or an existing one of that name adopted), read-only for members and owned by the user with that email; if they don't exist yet, the portal hands the group over on their first login. New users join it as members. Afterwards it's managed like any other group (`bin/set-group-role.sh`); its ID is kept in `zotero_selfhost.settings`.
 - **Storage quota:** new users get `ZOTERO_STORAGE_QUOTA_MB` (default unlimited) instead of the dataserver default of 300 MB.
 
 ### Database setup
