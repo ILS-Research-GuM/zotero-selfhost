@@ -1,0 +1,59 @@
+From 402b7bb048b10aded804fbadc96f477b4347115a Mon Sep 17 00:00:00 2001
+From: Janne Fleischer <janne.fleischer@ils-forschung.de>
+Date: Fri, 25 Sep 2026 09:06:03 +0000
+Subject: [PATCH 3/4] Support self-hosted S3 storage with separate internal and
+ public endpoints
+
+S3_ENDPOINT is used for server-side S3 calls, S3_PUBLIC_URL for upload
+URLs and presigned download URLs handed to clients.
+---
+ include/header.inc.php | 7 +++++++
+ model/Storage.inc.php  | 7 +++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/include/header.inc.php b/include/header.inc.php
+index 1c34975..5cd58e1 100644
+--- a/include/header.inc.php
++++ b/include/header.inc.php
+@@ -247,6 +247,13 @@ else {
+ 		'secret' => Z_CONFIG::$AWS_SECRET_KEY
+ 	];
+ }
++// Self-hosted S3-compatible storage (MinIO, Garage, SeaweedFS, ...)
++if (!empty(Z_CONFIG::$S3_ENDPOINT)) {
++	$awsConfig['S3'] = [
++		'endpoint' => Z_CONFIG::$S3_ENDPOINT,
++		'use_path_style_endpoint' => true
++	];
++}
+ Z_Core::$AWS = new Aws\Sdk($awsConfig);
+ unset($awsConfig);
+ 
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index 3b56b55..e2f2b0e 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -114,6 +114,10 @@ class Zotero_Storage {
+ 			}
+ 		}
+ 		
++		// The signature covers the host, so sign against the URL clients will use
++		if (!empty(Z_CONFIG::$S3_PUBLIC_URL)) {
++			$s3Client = Z_Core::$AWS->createS3(['endpoint' => Z_CONFIG::$S3_PUBLIC_URL]);
++		}
+ 		$cmd = $s3Client->getCommand('GetObject', [
+ 			'Bucket' => Z_CONFIG::$S3_BUCKET,
+ 			'Key' => $key,
+@@ -258,6 +262,9 @@ class Zotero_Storage {
+ 	
+ 	
+ 	public static function getUploadBaseURL() {
++		if (!empty(Z_CONFIG::$S3_PUBLIC_URL)) {
++			return rtrim(Z_CONFIG::$S3_PUBLIC_URL, '/') . "/" . Z_CONFIG::$S3_BUCKET . "/";
++		}
+ 		return "https://" . Z_CONFIG::$S3_BUCKET . ".s3.amazonaws.com/";
+ 	}
+ 	
+-- 
+2.34.1
+

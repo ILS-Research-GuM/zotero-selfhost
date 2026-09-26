@@ -1,7 +1,7 @@
-From c76ebd4b1ea37d3936e23284d3056925afddb940 Mon Sep 17 00:00:00 2001
+From fd451f4cfa5225bb4c08db76149d241218d8b528 Mon Sep 17 00:00:00 2001
 From: Zhang Fuxin <fxzhang@ict.ac.cn>
 Date: Thu, 4 Mar 2021 23:01:27 +0800
-Subject: [PATCH 3/4] add a debug information to help debug S3 server related
+Subject: [PATCH 2/4] add a debug information to help debug S3 server related
  failures
 
 ---
@@ -9,18 +9,18 @@ Subject: [PATCH 3/4] add a debug information to help debug S3 server related
  1 file changed, 2 insertions(+)
 
 diff --git a/model/FullText.inc.php b/model/FullText.inc.php
-index 52d278f..3964a18 100644
+index 8eba1d3..f1d1dad 100644
 --- a/model/FullText.inc.php
 +++ b/model/FullText.inc.php
-@@ -130,6 +130,8 @@ class Zotero_FullText {
+@@ -147,6 +147,8 @@ class Zotero_FullText {
  				$results->addSuccessful($i, $obj);
  			}
  			catch (Exception $e) {
 +				Z_Core::debug($e->getMessage());
 +
  				Zotero_DB::rollback();
- 				
- 				// If item key given, include that
+ 				// Clear stale cached version after rollback
+ 				Zotero_Libraries::refreshUpdatedVersion($libraryID);
 -- 
-2.25.1
+2.34.1
 
