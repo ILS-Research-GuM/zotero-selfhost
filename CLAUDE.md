@@ -44,11 +44,9 @@ plus our own portal, migrations and scripts. README.md describes the stack, READ
 
 ## Git
 
-- Work on the `steps` branch. `pr/upstream` holds the same changes without merge commits, for a pull request
-  to foxsen/zotero-selfhost; cherry-pick new commits there. The final tree of both must stay identical
-  (`git diff steps pr/upstream` empty).
+- One topic per commit, so the history can be reviewed step by step. Commit messages explain what changes and
+  why, in some detail.
 - Check the current branch before committing.
-- Commit messages explain what changes and why, in some detail.
 - Keep the repository deployment-neutral: no host names, identity providers or site-specific docs. Those stay
   in `.env` or untracked files.
 - `.env` and `data/` are never committed.
