@@ -1,6 +1,46 @@
 #!/bin/sh
+# Usage: bin/init.sh [--force]
+# One-time setup after the first "docker compose up -d": S3 storage and databases.
+# Existing databases (e.g. from a legacy import) are kept; --force recreates them and
+# deletes all data in them.
+set -e
+cd "$(dirname "$0")/.."
+. ./.env
 
-sudo docker-compose exec app-zotero bash -c 'cd /var/www/zotero/misc && ./init-mysql.sh'
-sudo docker-compose exec app-zotero bash -c 'aws --endpoint-url "http://minio:9000" s3 mb s3://zotero'
-sudo docker-compose exec app-zotero bash -c 'aws --endpoint-url "http://minio:9000" s3 mb s3://zotero-fulltext'
-sudo docker-compose exec app-zotero bash -c 'aws --endpoint-url "http://localstack:4575" sns create-topic --name zotero'
+DC="docker compose"
+garage() { $DC exec -T garage /garage "$@"; }
+
+echo "Setting up Garage..."
+NODE_ID=$(garage node id -q | cut -d@ -f1)
+if ! garage layout show | grep -q "$(echo "$NODE_ID" | cut -c1-16)"; then
+	garage layout assign -z dc1 -c 100G "$NODE_ID"
+	garage layout apply --version 1
+fi
+garage key info "$S3_ACCESS_KEY" >/dev/null 2>&1 \
+	|| garage key import --yes -n zotero "$S3_ACCESS_KEY" "$S3_SECRET_KEY"
+for bucket in zotero zotero-fulltext; do
+	garage bucket info "$bucket" >/dev/null 2>&1 || garage bucket create "$bucket"
+	garage bucket allow --read --write --owner "$bucket" --key "$S3_ACCESS_KEY"
+done
+
+# Let the web-library fetch attachments directly from S3
+echo "Setting bucket CORS for $WEB_LIBRARY_URL..."
+CORS="{\"CORSRules\":[{\"AllowedOrigins\":[\"$WEB_LIBRARY_URL\"],\"AllowedMethods\":[\"GET\",\"HEAD\",\"POST\"],\"AllowedHeaders\":[\"*\"],\"ExposeHeaders\":[\"ETag\"],\"MaxAgeSeconds\":3600}]}"
+for bucket in zotero zotero-fulltext; do
+	docker run --rm --network host -e AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" -e AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+		-e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli --endpoint-url "http://127.0.0.1:${S3_PORT:-8182}" \
+		s3api put-bucket-cors --bucket "$bucket" --cors-configuration "$CORS"
+done
+
+# Files of a legacy export, now that the buckets exist
+$DC run --rm s3-import
+
+if [ "${1:-}" != "--force" ] && $DC exec -T mysql sh -c \
+	'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot -N -e "SHOW DATABASES LIKE \"zotero_master\""' | grep -q .; then
+	echo "Databases exist, keeping them (bin/init.sh --force recreates them)"
+	exit 0
+fi
+echo "Setting up databases..."
+$DC exec -T dataserver /var/www/zotero/misc/init-mysql.sh
+
+echo "Done. Log in with user '$ZOTERO_ADMIN_USER' and the password from ZOTERO_ADMIN_PASSWORD in .env"

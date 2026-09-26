@@ -1,3 +1,3 @@
 #!/bin/sh
-
-sudo docker-compose exec app-zotero /var/www/zotero/admin/list-user.sh
+cd "$(dirname "$0")/.."
+exec docker compose exec -T dataserver /var/www/zotero/misc/list-user.sh

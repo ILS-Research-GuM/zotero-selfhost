@@ -24,7 +24,7 @@
 CREATE TABLE IF NOT EXISTS `users` (
   `userID` mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
   `username` varchar(40) CHARACTER SET utf8 NOT NULL,
-  `password` char(40) COLLATE utf8_bin NOT NULL,
+  `password` varchar(255) COLLATE utf8_bin NOT NULL,
   `role` enum('normal','deleted') NOT NULL DEFAULT 'normal',
   PRIMARY KEY (`userID`),
   UNIQUE KEY `username` (`username`)
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS `users_email` (
   `emailID` int(10) unsigned NOT NULL AUTO_INCREMENT,
   `userID` int(10) unsigned NOT NULL,
   `email` varchar(100) CHARACTER SET utf8 NOT NULL,
+  `validated` tinyint(1) NOT NULL DEFAULT '1',
   PRIMARY KEY (`emailID`),
   KEY `userID` (`userID`),
   KEY `email` (`email`)
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS `LUM_User` (
 CREATE TABLE IF NOT EXISTS `storage_institutions` (
   `institutionID` smallint(5) unsigned NOT NULL AUTO_INCREMENT,
   `domain` varchar(100) NOT NULL,
-  `domainBlacklist` text,
+  `domainBlacklist` varchar(255) NOT NULL DEFAULT '',
   `storageQuota` int(11) NOT NULL,
   PRIMARY KEY (`institutionID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

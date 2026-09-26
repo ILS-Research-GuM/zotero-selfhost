@@ -1,69 +1,201 @@
-version: '3'
+name: zotero
+
+x-dataserver-env: &dataserver-env
+  MYSQL_HOST: mysql
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+  ZOTERO_API_URL: ${ZOTERO_API_URL:?}
+  # Base of the loginURL the desktop client opens: the portal
+  ZOTERO_WWW_URL: ${WEB_LIBRARY_URL:?}
+  ZOTERO_AUTH_SALT: ${ZOTERO_AUTH_SALT:?}
+  ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
+  ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
+  ZOTERO_ADMIN_USER: ${ZOTERO_ADMIN_USER:-admin}
+  ZOTERO_ADMIN_PASSWORD: ${ZOTERO_ADMIN_PASSWORD:?}
+  ZOTERO_ADMIN_EMAIL: ${ZOTERO_ADMIN_EMAIL:-admin@localhost}
+  ZOTERO_STORAGE_QUOTA_MB: ${ZOTERO_STORAGE_QUOTA_MB:-1000000}
+  DEFAULT_GROUP_NAME: ${DEFAULT_GROUP_NAME:-Shared}
+  DEFAULT_GROUP_EDITING: ${DEFAULT_GROUP_EDITING:-members}
+  S3_ENDPOINT: http://garage:3900
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:?}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+
 services:
-  db-zotero-mysql:
-    image: mysql:5.7
-    command: --default-authentication-plugin=mysql_native_password
-    environment:
-      - MYSQL_ROOT_PASSWORD=zotero
+  # Runs once before everything else: creates data/ and sets owners and modes
+  init-data:
+    image: alpine:3
+    command: ["/init-data.sh"]
     volumes:
-      - "./config/mysql/conf.d:/etc/mysql/conf.d"
-  db-zotero-elasticsearch:
-   image: docker.elastic.co/elasticsearch/elasticsearch:5.3.0
-   environment:
-     - cluster.name=zotero
-     - xpack.security.enabled=false
-  db-zotero-redis:
-     image: redis:5.0
-  db-zotero-memcached:
-     image: memcached:1.5
-  db-zotero-localstack:
-    image: atlassianlabs/localstack
+      - ./docker/init-data/init-data.sh:/init-data.sh:ro
+      - ./data:/data
+    restart: "no"
+
+  mysql:
+    image: mysql:8.4
     environment:
-      - SERVICES=sns,sqs,apigateway
-  db-zotero-minio:
-    image: minio/minio
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+    volumes:
+      - ./config/mysql/conf.d:/etc/mysql/conf.d:ro
+      - ./data/mysql:/var/lib/mysql
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -uroot"]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+
+  memcached:
+    image: memcached:1.6-alpine
+    restart: unless-stopped
+
+  garage:
+    image: dxflrs/garage:v2.4.0
     environment:
-      - MINIO_ACCESS_KEY=zotero
-      - MINIO_SECRET_KEY=zoterodocker
-    command: server /data
-  app-zotero:
-    image: app-zotero
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?}
+    volumes:
+      - ./config/garage/garage.toml:/etc/garage.toml:ro
+      - ./data/garage:/var/lib/garage
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${S3_PORT:-8182}:3900"
+    restart: unless-stopped
+
+  tinymce-clean:
     build:
       context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8080:80"
-      - "8081:81"
-      - "8082:8082"
+      dockerfile: docker/tinymce-clean/Dockerfile
+    restart: unless-stopped
+
+  # Runs before the dataserver: imports data/legacy/ once, backs up to data/backups/ and
+  # migrates the databases to the schema of this dataserver version
+  db-migrate:
+    build:
+      context: .
+      dockerfile: docker/dataserver/Dockerfile
+    image: zotero-dataserver
+    command: ["/var/www/zotero/misc/migrate.sh"]
+    environment: *dataserver-env
     volumes:
-      - "./config/config.inc.php:/var/www/zotero/include/config/config.inc.php:ro"
-      - "./config/dbconnect.inc.php:/var/www/zotero/include/config/dbconnect.inc.php:ro"
-      - "./config/default.js:/var/www/stream-server/config/default.js:ro"
-      - "./config/dataserver-scripts/create-user.sh:/var/www/zotero/admin/create-user.sh:ro"
-      - "./config/dataserver-scripts/list-user.sh:/var/www/zotero/admin/list-user.sh:ro"
-      - "./config/dataserver-scripts/www.sql:/var/www/zotero/misc/www.sql:ro"
-      - "./config/dataserver-scripts/init-mysql.sh:/var/www/zotero/misc/init-mysql.sh:ro"
-    environment:
-      - RUN_USER=www-data
-      - RUN_GROUP=www-data
+      - ./data/backups:/backups
+      - ./data/legacy:/legacy
     depends_on:
-      - db-zotero-mysql
-      - db-zotero-elasticsearch
-      - db-zotero-redis
-      - db-zotero-memcached 
-    links:
-      - db-zotero-mysql:mysql
-      - db-zotero-elasticsearch:elasticsearch
-      - db-zotero-redis:redis
-      - db-zotero-memcached:memcached
-      - db-zotero-localstack:localstack
-      - db-zotero-minio:minio
-    restart: always
-  app-zotero-phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    ports:
-      - "8083:80"
+      init-data:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  # Uploads the files of a legacy export (data/legacy/s3/) into Garage, once
+  s3-import:
+    image: amazon/aws-cli
+    entrypoint: ["/import.sh"]
     environment:
-      - PMA_HOST=mysql
-    links:
-      - db-zotero-mysql:mysql
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./docker/s3-import/import.sh:/import.sh:ro
+      - ./data/legacy:/legacy
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      garage:
+        condition: service_started
+    restart: "no"
+
+  dataserver:
+    build:
+      context: .
+      dockerfile: docker/dataserver/Dockerfile
+    image: zotero-dataserver
+    environment: *dataserver-env
+    volumes:
+      - ./data/dataserver-errors:/var/www/zotero/errors
+    networks:
+      default:
+      backend:
+        aliases: [dataserver-internal]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8180}:80"
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      memcached:
+        condition: service_started
+      garage:
+        condition: service_started
+      tinymce-clean:
+        condition: service_started
+    restart: unless-stopped
+
+  stream-server:
+    build:
+      context: .
+      dockerfile: docker/stream-server/Dockerfile
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${STREAM_PORT:-8181}:8080"
+    depends_on:
+      - redis
+      - dataserver
+    restart: unless-stopped
+
+  web-library:
+    build:
+      context: .
+      dockerfile: docker/web-library/Dockerfile
+      args:
+        WEB_LIBRARY_COMMIT: ${WEB_LIBRARY_COMMIT:?run utils/build.sh or set WEB_LIBRARY_COMMIT}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_LIBRARY_PORT:-8183}:80"
+    restart: unless-stopped
+
+  # Keycloak login, per-user web-library page and desktop client login
+  portal:
+    build:
+      context: .
+      dockerfile: docker/portal/Dockerfile
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
+      ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
+      ZOTERO_STORAGE_QUOTA_MB: ${ZOTERO_STORAGE_QUOTA_MB:-1000000}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      WEB_LIBRARY_URL: ${WEB_LIBRARY_URL:?}
+      API_SCHEME: ${API_SCHEME:?}
+      API_AUTHORITY: ${API_AUTHORITY:?}
+      STREAMING_URL: ${STREAMING_URL:?}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORTAL_PORT:-8184}:80"
+    networks: [default, backend]
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      dataserver:
+        condition: service_started
+    restart: unless-stopped
+
+networks:
+  default:
+  # Private subnet for portal -> dataserver: the dataserver only accepts super-user
+  # requests from private addresses, and requests from outside must not come from one
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.203.77.0/28
+

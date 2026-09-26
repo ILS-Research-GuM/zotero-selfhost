@@ -1,0 +1,26 @@
+From 8a7200fbb6f1d63b9d67ed87fb856446c18765e8 Mon Sep 17 00:00:00 2001
+From: Janne Fleischer <janne.fleischer@ils-forschung.de>
+Date: Fri, 25 Sep 2026 09:25:54 +0000
+Subject: [PATCH] Use integers for content-length-range in S3 upload policy
+
+S3-compatible stores like Garage reject string values here.
+---
+ model/Storage.inc.php | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index e2f2b0e..85b4834 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -783,7 +783,7 @@ class Zotero_Storage {
+ 				['key' => $info->hash],
+ 				['acl' => 'private'],
+ 				['Content-MD5' => $contentMD5],
+-				['content-length-range', $info->size, $info->size],
++				['content-length-range', (int) $info->size, (int) $info->size],
+ 				['success_action_status' => $successStatus],
+ 				['x-amz-credential' => $credentials],
+ 				['x-amz-algorithm' => $algorithm],
+-- 
+2.34.1
+

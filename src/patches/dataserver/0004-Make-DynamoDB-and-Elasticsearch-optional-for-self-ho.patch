@@ -1,0 +1,86 @@
+From 9c79d618b7489dbaa8adf5c9aa8185bb47d62d20 Mon Sep 17 00:00:00 2001
+From: Janne Fleischer <janne.fleischer@ils-forschung.de>
+Date: Fri, 25 Sep 2026 09:06:30 +0000
+Subject: [PATCH 4/4] Make DynamoDB and Elasticsearch optional for self-hosting
+
+With FULLTEXT_INDEXING_TABLE empty, full-text index state is not tracked
+in DynamoDB. With SEARCH_HOSTS empty, server-side full-text search returns
+no hits instead of failing. zotero.org fills the search index via an
+external indexer, which a self-hosted setup does not have.
+---
+ include/header.inc.php  | 9 +++++----
+ model/FullText.inc.php  | 6 ++++++
+ model/Libraries.inc.php | 6 ++++++
+ 3 files changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/include/header.inc.php b/include/header.inc.php
+index 5cd58e1..80217a9 100644
+--- a/include/header.inc.php
++++ b/include/header.inc.php
+@@ -258,10 +258,11 @@ Z_Core::$AWS = new Aws\Sdk($awsConfig);
+ unset($awsConfig);
+ 
+ // Elasticsearch
+-$esConfig = [
+-	'hosts' => Z_CONFIG::$SEARCH_HOSTS
+-];
+-Z_Core::$ES = \Elasticsearch\ClientBuilder::fromConfig($esConfig, true);
++$searchHosts = array_filter(Z_CONFIG::$SEARCH_HOSTS);
++if ($searchHosts) {
++	Z_Core::$ES = \Elasticsearch\ClientBuilder::fromConfig(['hosts' => $searchHosts], true);
++}
++unset($searchHosts);
+ 
+ require('interfaces/IAuthenticationPlugin.inc.php');
+ 
+diff --git a/model/FullText.inc.php b/model/FullText.inc.php
+index f1d1dad..99c5d3e 100644
+--- a/model/FullText.inc.php
++++ b/model/FullText.inc.php
+@@ -245,6 +245,9 @@ class Zotero_FullText {
+ 	 * @return {Array<String>|null} An array of item keys, or null if no results
+ 	 */
+ 	public static function searchInLibrary($libraryID, $searchText) {
++		if (!Z_Core::$ES) {
++			return [];
++		}
+ 		$params = [
+ 			'index' => self::$elasticsearchType . "_index",
+ 			'type' => self::$elasticsearchType,
+@@ -294,6 +297,9 @@ class Zotero_FullText {
+ 	 * Number of full-text documents currently in Elasticsearch for a library
+ 	 */
+ 	public static function countIndexedInLibrary($libraryID) {
++		if (!Z_Core::$ES) {
++			return 0;
++		}
+ 		$params = [
+ 			'index' => self::$elasticsearchType . "_index",
+ 			'routing' => $libraryID,
+diff --git a/model/Libraries.inc.php b/model/Libraries.inc.php
+index c12588d..f58efd8 100644
+--- a/model/Libraries.inc.php
++++ b/model/Libraries.inc.php
+@@ -67,6 +67,9 @@ class Zotero_Libraries {
+ 	 *   refill completes.
+ 	 */
+ 	public static function getFullTextIndexState($libraryID) {
++		if (empty(Z_CONFIG::$FULLTEXT_INDEXING_TABLE)) {
++			return ['deindexed' => false, 'reindexing' => null, 'indexableCount' => null];
++		}
+ 		$ddb = Z_Core::$AWS->createDynamoDb();
+ 		$result = $ddb->getItem([
+ 			'TableName' => Z_CONFIG::$FULLTEXT_INDEXING_TABLE,
+@@ -143,6 +146,9 @@ class Zotero_Libraries {
+ 	 * so throttle to one write per library/mode per day via memcached.
+ 	 */
+ 	public static function recordItemSearch($libraryID, $fullText = false) {
++		if (empty(Z_CONFIG::$FULLTEXT_INDEXING_TABLE)) {
++			return;
++		}
+ 		$attrs = [];
+ 		if (Z_Core::$MC->add("lastMetadataSearchStamped_$libraryID", 1, 86400)) {
+ 			$attrs[] = 'lastMetadataSearch';
+-- 
+2.34.1
+

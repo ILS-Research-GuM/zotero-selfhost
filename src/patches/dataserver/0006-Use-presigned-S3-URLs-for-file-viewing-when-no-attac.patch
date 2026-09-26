@@ -1,0 +1,32 @@
+From f83de169d9587faab755ed919c20c0d4efda77e9 Mon Sep 17 00:00:00 2001
+From: Janne Fleischer <janne.fleischer@ils-forschung.de>
+Date: Fri, 25 Sep 2026 12:41:47 +0000
+Subject: [PATCH] Use presigned S3 URLs for file viewing when no attachment
+ proxy is configured
+
+The attachment proxy used by zotero.org is not public. With an empty
+ATTACHMENT_PROXY_URL the view URL was relative and resolved against the
+web-library origin.
+---
+ model/Attachments.inc.php | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/model/Attachments.inc.php b/model/Attachments.inc.php
+index 3d2a573..15961aa 100644
+--- a/model/Attachments.inc.php
++++ b/model/Attachments.inc.php
+@@ -54,6 +54,11 @@ class Zotero_Attachments {
+ 	}
+ 	
+ 	public static function getTemporaryURL(Zotero_Item $item, $onlyStream = false) {
++		// Without an attachment proxy, hand out a presigned S3 URL directly
++		if (empty(Z_CONFIG::$ATTACHMENT_PROXY_URL)) {
++			return Zotero_Storage::getDownloadURL($item, self::$urlTTL);
++		}
++
+ 		$info = Zotero_Storage::getLocalFileItemInfo($item);
+ 		$storageFileID = $info['storageFileID'];
+ 		$mtime = $info['mtime'];
+-- 
+2.34.1
+
