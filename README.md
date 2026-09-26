@@ -104,6 +104,9 @@ The portal signs users in with an OpenID Connect provider, with username and pas
 | `OIDC_ISSUER` set | Straight to the OIDC provider |
 | `OIDC_ISSUER` set, `PASSWORD_LOGIN=true` | Sign-in page with a button for the OIDC login (text: `OIDC_LABEL`) and the password form, e.g. for external users without an account at the provider |
 
+The portal's pages are in English, or in German for browsers that prefer it; `PORTAL_LANGUAGE=en|de` fixes
+the language. Translations are in `docker/portal/src/lang/<language>.php`, keyed by the English text.
+
 The password check accepts the same hashes as the dataserver (bcrypt, and salted SHA1 or MD5 from older
 installations). Failed attempts are delayed by two seconds. Accounts that the portal created for OIDC users
 have a random password, so they can only log in through the provider.
