@@ -242,7 +242,7 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 | `bin/create-api-key.sh` | Create an API key with username and password |
 | `utils/update.sh [name ref \| --verify]` | Show pinned and upstream versions, pin a submodule to a tag or commit (checks patches, updates `versions.lock` and `WEB_LIBRARY_COMMIT`) |
 | `utils/patch.sh [--check]` | Test the patches or apply them to the dataserver submodule |
-| `utils/smoke-test.py [--public]` | End-to-end check with 21 checks, `--public` goes through the client-facing URLs |
+| `utils/smoke-test.py [--public]` | End-to-end check with 25 checks, `--public` goes through the client-facing URLs |
 
 ## Previous README: what still applies
 
@@ -280,7 +280,7 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 
 ## Tests
 
-`utils/smoke-test.py` passes all 21 checks, both locally and through a TLS reverse proxy (`--public`):
+`utils/smoke-test.py` passes all 25 checks, both locally and through a TLS reverse proxy (`--public`):
 
 - Schema, login (including a wrong password)
 - Items, notes (tinymce-clean), group library
@@ -288,7 +288,9 @@ On zotero.org, zotero.org itself is that website. Here the `portal` service take
 - Full text
 - Streaming push after a change
 - Deletion
-- web-library assets
+- web-library assets, PDF reader modules served as JavaScript
+- portal without a real login: redirect to the OIDC provider (client ID, redirect URI), for the web-library and
+  the desktop client login; callback with an unknown state rejected; background requests get 401
 
 The portal's provisioning and the desktop login session were tested directly against the API.
 The OIDC login and the web-library were tested in a browser.
@@ -300,7 +302,7 @@ The OIDC login and the web-library were tested in a browser.
 1. **End-to-end test with the desktop client:** browser login, sync, attachments, a second device.
 2. ~~CORS on the S3 bucket~~: done, set by `bin/init.sh`.
 3. **Cache headers** for web-library assets (`Cache-Control: no-cache` with ETag).
-4. **Extend the smoke test to the portal:** OIDC redirect, confirmation page.
+4. ~~Extend the smoke test to the portal~~: done, without a real login (that would need a test user at the provider).
 5. **Update README.md** for the portal: the web-library and desktop client sections still describe the fixed-key and password login.
 
 ### Operations
