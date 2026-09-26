@@ -1,6 +1,8 @@
 #!/bin/sh
+# Usage: bin/init.sh [--force]
 # One-time setup after the first "docker compose up -d": S3 storage and databases.
-# Re-running it recreates the databases and deletes all data in them.
+# Existing databases (e.g. from a legacy import) are kept; --force recreates them and
+# deletes all data in them.
 set -e
 cd "$(dirname "$0")/.."
 . ./.env
@@ -30,6 +32,14 @@ for bucket in zotero zotero-fulltext; do
 		s3api put-bucket-cors --bucket "$bucket" --cors-configuration "$CORS"
 done
 
+# Files of a legacy export, now that the buckets exist
+$DC run --rm s3-import
+
+if [ "${1:-}" != "--force" ] && $DC exec -T mysql sh -c \
+	'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot -N -e "SHOW DATABASES LIKE \"zotero_master\""' | grep -q .; then
+	echo "Databases exist, keeping them (bin/init.sh --force recreates them)"
+	exit 0
+fi
 echo "Setting up databases..."
 $DC exec -T dataserver /var/www/zotero/misc/init-mysql.sh
 

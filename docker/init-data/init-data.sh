@@ -16,3 +16,5 @@ chmod 755 /data
 fix mysql 999 999 750             # mysql user in mysql:8.4
 fix garage 0 0 700                # garage runs as root
 fix dataserver-errors 33 33 750   # www-data in php:8.4-apache
+fix backups 0 0 700               # database dumps of db-migrate
+fix legacy 0 0 700                # legacy export to import (see legacy/)

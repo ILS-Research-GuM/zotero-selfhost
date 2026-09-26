@@ -74,10 +74,48 @@ services:
       dockerfile: docker/tinymce-clean/Dockerfile
     restart: unless-stopped
 
+  # Runs before the dataserver: imports data/legacy/ once, backs up to data/backups/ and
+  # migrates the databases to the schema of this dataserver version
+  db-migrate:
+    build:
+      context: .
+      dockerfile: docker/dataserver/Dockerfile
+    image: zotero-dataserver
+    command: ["/var/www/zotero/misc/migrate.sh"]
+    environment: *dataserver-env
+    volumes:
+      - ./data/backups:/backups
+      - ./data/legacy:/legacy
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  # Uploads the files of a legacy export (data/legacy/s3/) into Garage, once
+  s3-import:
+    image: amazon/aws-cli
+    entrypoint: ["/import.sh"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./docker/s3-import/import.sh:/import.sh:ro
+      - ./data/legacy:/legacy
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+      garage:
+        condition: service_started
+    restart: "no"
+
   dataserver:
     build:
       context: .
       dockerfile: docker/dataserver/Dockerfile
+    image: zotero-dataserver
     environment: *dataserver-env
     volumes:
       - ./data/dataserver-errors:/var/www/zotero/errors
@@ -90,8 +128,8 @@ services:
     depends_on:
       init-data:
         condition: service_completed_successfully
-      mysql:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       memcached:
@@ -147,8 +185,10 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORTAL_PORT:-8184}:80"
     networks: [default, backend]
     depends_on:
-      - mysql
-      - dataserver
+      db-migrate:
+        condition: service_completed_successfully
+      dataserver:
+        condition: service_started
     restart: unless-stopped
 
 networks:
