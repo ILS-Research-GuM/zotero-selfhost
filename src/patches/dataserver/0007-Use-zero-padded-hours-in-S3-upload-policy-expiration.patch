@@ -1,0 +1,28 @@
+From 286c8f4a8b714ef9c6929ea75c157c8cffd3569a Mon Sep 17 00:00:00 2001
+From: Janne Fleischer <janne.fleischer@ils-forschung.de>
+Date: Sat, 26 Sep 2026 06:16:21 +0000
+Subject: [PATCH] Use zero-padded hours in S3 upload policy expiration
+
+'G' drops the leading zero, producing e.g. 2026-09-26T7:15:49Z before
+10:00 UTC, which is not ISO 8601. S3-compatible stores like Garage
+reject it.
+---
+ model/Storage.inc.php | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index 85b4834..a85e97e 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -776,7 +776,7 @@ class Zotero_Storage {
+ 		
+ 		$policy = [
+ 			'expiration' => gmdate(
+-				'Y-m-d\TG:i:s\Z', strtotime('+' . self::$s3PresignedRequestTTL . ' seconds')
++				'Y-m-d\TH:i:s\Z', strtotime('+' . self::$s3PresignedRequestTTL . ' seconds')
+ 			),
+ 			'conditions' => [
+ 				['bucket' => Z_CONFIG::$S3_BUCKET],
+-- 
+2.34.1
+

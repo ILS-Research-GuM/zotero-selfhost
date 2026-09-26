@@ -7,7 +7,7 @@ x-dataserver-env: &dataserver-env
   ZOTERO_AUTH_SALT: ${ZOTERO_AUTH_SALT:?}
   ZOTERO_SUPER_USER: ${ZOTERO_SUPER_USER:-admin}
   ZOTERO_SUPER_PASSWORD: ${ZOTERO_SUPER_PASSWORD:?}
-  S3_ENDPOINT: http://minio:9000
+  S3_ENDPOINT: http://garage:3900
   S3_PUBLIC_URL: ${S3_PUBLIC_URL:?}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
   S3_SECRET_KEY: ${S3_SECRET_KEY:?}
@@ -34,16 +34,15 @@ services:
     image: memcached:1.6-alpine
     restart: unless-stopped
 
-  minio:
-    image: minio/minio
-    command: server /data
+  garage:
+    image: dxflrs/garage:v2.4.0
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?}
     volumes:
-      - minio-data:/data
+      - ./config/garage/garage.toml:/etc/garage.toml:ro
+      - garage-data:/var/lib/garage
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${S3_PORT:-8182}:9000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${S3_PORT:-8182}:3900"
     restart: unless-stopped
 
   tinymce-clean:
@@ -66,7 +65,7 @@ services:
         condition: service_started
       memcached:
         condition: service_started
-      minio:
+      garage:
         condition: service_started
       tinymce-clean:
         condition: service_started
@@ -95,4 +94,4 @@ services:
 
 volumes:
   mysql-data:
-  minio-data:
+  garage-data:

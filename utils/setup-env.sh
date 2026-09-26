@@ -33,8 +33,10 @@ MYSQL_ROOT_PASSWORD=$(pw)
 ZOTERO_AUTH_SALT=$(hex 16)
 ZOTERO_SUPER_USER=admin
 ZOTERO_SUPER_PASSWORD=$(pw)
-S3_ACCESS_KEY=$(hex 12)
+# Garage requires key IDs of the form GK + 24 hex digits and 64 hex digit secrets
+S3_ACCESS_KEY=GK$(hex 12)
 S3_SECRET_KEY=$(hex 32)
+GARAGE_RPC_SECRET=$(hex 32)
 
 # Commit of src/server/web-library (see versions.lock), updated by utils/update.sh
 WEB_LIBRARY_COMMIT=$(git -C src/server/web-library rev-parse HEAD)
