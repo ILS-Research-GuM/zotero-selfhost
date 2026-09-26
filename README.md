@@ -20,6 +20,7 @@ previous package: see [Upgrading from the 2021 package](#upgrading-from-the-2021
 | `web-library` | built, nginx | Static files of the browser UI |
 | `portal` | built, PHP 8.4 | Login (OIDC and/or password), per-user web-library page, desktop client browser login |
 | `tinymce-clean` | built, Node 22 | Sanitizes note HTML for the dataserver |
+| `translation-server` | built, Node 24 | Metadata for "Add by identifier" (DOI, ISBN, PMID, arXiv) and URLs in the web-library |
 | `mysql` | `mysql:8.4` | Master, shard, ID and user databases |
 | `garage` | `dxflrs/garage` | S3-compatible file storage |
 | `redis` | `valkey/valkey` | Rate limits and notifications |
@@ -224,4 +225,7 @@ so `legacy/export.sh` dumps the databases and copies the files first. Details in
 - No self-service registration or password reset; password accounts are created with `bin/create-user.sh`.
 - The web-library downloads fonts, styles and prebuilt reader and note-editor modules from zotero.org at image build time,
   and citation styles at runtime.
-- Translation server (adding items by identifier in the web-library) is not included.
+- The translation server needs internet access. It is reachable only through the portal (`/translate/`, logged-in
+  users) and sits on its own network, away from the databases. Its translators are pinned with the submodule;
+  `utils/update.sh translation-server master` brings newer ones. The desktop client doesn't use it; it translates
+  locally.

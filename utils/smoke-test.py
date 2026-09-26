@@ -113,6 +113,9 @@ def main():
 
 def portal_tests():
 	"""The portal: login redirects to the OIDC provider, and with password login a real login"""
+	status, _, _ = request('POST', PORTAL + '/translate/search', b'10.1038/nature12373',
+		{'Content-Type': 'text/plain', 'Sec-Fetch-Mode': 'cors'})
+	check('Portal: translation server needs a login', status == 401, status)
 	oidc = bool(ENV.get('OIDC_ISSUER'))
 	pw = ENV.get('PASSWORD_LOGIN', '').lower() in ('1', 'true', 'yes', 'on') if ENV.get('PASSWORD_LOGIN') else not oidc
 	if pw:
@@ -157,9 +160,9 @@ def portal_password_tests(oidc):
 		h = {'Sec-Fetch-Mode': 'navigate', **(headers or {})}
 		if cookie:
 			h['Cookie'] = '; '.join(f"{k}={v}" for k, v in cookie.items())
-		if body is not None:
+		if isinstance(body, dict):
 			body = urllib.parse.urlencode(body)
-			h['Content-Type'] = 'application/x-www-form-urlencoded'
+			h.setdefault('Content-Type', 'application/x-www-form-urlencoded')
 		status, headers, data = request('POST' if body is not None else 'GET', PORTAL + path, body, h)
 		for c in headers.get_all('Set-Cookie') or []:
 			k, v = c.split(';', 1)[0].split('=', 1)
@@ -182,7 +185,12 @@ def portal_password_tests(oidc):
 	check('Portal: password login returns to the desktop client login',
 		status == 302 and headers.get('Location') == base + '/login?session=smoketest', f"{status} {headers.get('Location')}")
 	status, _, page = get('/')
-	check('Portal: web-library page with user configuration', status == 200 and '"apiKey"' in page, status)
+	check('Portal: web-library page with user configuration', status == 200 and '"apiKey"' in page
+		and '"translateUrl"' in page, status)
+	# Needs internet access from the translation server (doi.org, Crossref)
+	status, _, body = get('/translate/search', '10.1038/nature12373', {'Content-Type': 'text/plain', 'Sec-Fetch-Mode': 'cors'})
+	check('Portal: translation server resolves a DOI', status == 200 and 'Nanometre-scale thermometry' in body,
+		f"{status} {body[:200]}")
 
 def run_tests(userID, key):
 	lib = f'/users/{userID}'

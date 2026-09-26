@@ -3,7 +3,7 @@
 #        utils/update.sh <name> <ref>    pin a submodule to a tag, branch or commit
 #        utils/update.sh --verify        fail if a submodule differs from versions.lock
 #
-# <name> is dataserver, stream-server, tinymce-clean-server or web-library.
+# <name> is dataserver, stream-server, tinymce-clean-server, translation-server or web-library.
 # Pinning checks out <ref>, checks that the patches still apply, updates versions.lock and
 # WEB_LIBRARY_COMMIT in .env and .env.example, and stages the submodule pointer. Rebuild
 # afterwards; the db-migrate service brings the database up to date on the next start.

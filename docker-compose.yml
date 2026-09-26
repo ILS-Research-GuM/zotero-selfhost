@@ -161,6 +161,16 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${WEB_LIBRARY_PORT:-8183}:80"
     restart: unless-stopped
 
+  # Fetches metadata for "Add by identifier" and URLs in the web-library. Reached only through the
+  # portal (/translate/, logged-in users) and kept off the internal networks, since it loads
+  # arbitrary URLs
+  translation-server:
+    build:
+      context: .
+      dockerfile: docker/translation-server/Dockerfile
+    networks: [translate]
+    restart: unless-stopped
+
   # Login (OIDC or password), per-user web-library page and desktop client login
   portal:
     build:
@@ -188,16 +198,20 @@ services:
       STREAMING_URL: ${STREAMING_URL:?}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORTAL_PORT:-8184}:80"
-    networks: [default, backend]
+    networks: [default, backend, translate]
     depends_on:
       db-migrate:
         condition: service_completed_successfully
       dataserver:
         condition: service_started
+      translation-server:
+        condition: service_started
     restart: unless-stopped
 
 networks:
   default:
+  # portal <-> translation-server only; the translation server needs internet access
+  translate:
   # Private subnet for portal -> dataserver: the dataserver only accepts super-user
   # requests from private addresses, and requests from outside must not come from one
   backend:
