@@ -62,6 +62,7 @@ Requires Docker with the Compose plugin. Run the commands as a user allowed to u
 ```bash
 git clone --recursive <repository url> zotero-selfhost && cd zotero-selfhost
 ./utils/setup-env.sh zotero.example.org   # host name clients use; creates .env with random secrets
+                                          # (.env.example documents all variables)
 # edit .env: public URLs, OIDC_* (see below), DEFAULT_GROUP_NAME, SHARED_GROUP_OWNER
 docker compose up -d --build
 ./bin/init.sh                             # one-time: S3 buckets and CORS, databases, admin user, default group

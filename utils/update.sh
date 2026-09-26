@@ -5,8 +5,8 @@
 #
 # <name> is dataserver, stream-server, tinymce-clean-server or web-library.
 # Pinning checks out <ref>, checks that the patches still apply, updates versions.lock and
-# WEB_LIBRARY_COMMIT in .env, and stages the submodule pointer. Rebuild afterwards; the
-# db-migrate service brings the database up to date on the next start.
+# WEB_LIBRARY_COMMIT in .env and .env.example, and stages the submodule pointer. Rebuild
+# afterwards; the db-migrate service brings the database up to date on the next start.
 set -e
 cd "$(dirname "$0")/.."
 LOCK=versions.lock
@@ -56,10 +56,13 @@ fi
 awk -v p="$path" -v r="$name_" -v c="$commit" \
 	'$1 == p { printf "%-35s %-22s %s\n", p, r, c; next } { print }' "$LOCK" > "$LOCK.tmp"
 mv "$LOCK.tmp" "$LOCK"
-if [ "$name" = web-library ] && [ -e .env ]; then
-	sed -i "s/^WEB_LIBRARY_COMMIT=.*/WEB_LIBRARY_COMMIT=$commit/" .env
+if [ "$name" = web-library ]; then
+	sed -i "s/^WEB_LIBRARY_COMMIT=.*/WEB_LIBRARY_COMMIT=$commit/" .env.example
+	if [ -e .env ]; then
+		sed -i "s/^WEB_LIBRARY_COMMIT=.*/WEB_LIBRARY_COMMIT=$commit/" .env
+	fi
 fi
-git add "$path" "$LOCK"
+git add "$path" "$LOCK" .env.example
 
 echo "Pinned $path to $name_ ($commit)"
 echo "Rebuild with: docker compose build && docker compose up -d"

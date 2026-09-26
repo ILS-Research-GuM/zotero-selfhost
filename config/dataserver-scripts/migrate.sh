@@ -152,6 +152,10 @@ check_www_email_validated() { has_col $1 users_email validated; }
 apply_www_email_validated() { q $1 "ALTER TABLE users_email ADD validated tinyint(1) NOT NULL DEFAULT 1"; }
 
 check_www_domain_blacklist() { ! has_table $1 storage_institutions || [ "$(col $1 storage_institutions domainBlacklist DATA_TYPE)" = varchar ]; }
+# The portal's link to the OIDC account was called keycloakSub in early versions
+check_www_oidc_sub() { ! has_table $1 users_meta || [ -z "$(q $1 "SELECT 1 FROM users_meta WHERE metaKey='keycloakSub' LIMIT 1")" ]; }
+apply_www_oidc_sub() { q $1 "UPDATE users_meta SET metaKey='oidcSub' WHERE metaKey='keycloakSub'"; }
+
 apply_www_domain_blacklist() {
 	q $1 "UPDATE storage_institutions SET domainBlacklist='' WHERE domainBlacklist IS NULL"
 	q $1 "ALTER TABLE storage_institutions MODIFY domainBlacklist varchar(255) NOT NULL DEFAULT ''"
@@ -309,6 +313,7 @@ MIGRATIONS=(
 	www:www_password
 	www:www_email_validated
 	www:www_domain_blacklist
+	www:www_oidc_sub
 	shard:link_mode_embedded_image
 	shard:bigint_ids
 	shard:item_annotations

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: delete-user.sh <userID>
-# Deletes the user with all library data, API keys and the Keycloak link. Files in S3 stay.
+# Deletes the user with all library data, API keys and the OIDC link. Files in S3 stay.
 set -e
 
 USERID="$1"

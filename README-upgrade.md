@@ -171,8 +171,8 @@ sudo utils/smoke-test.py
 - The old MySQL password was `zotero`; `OLD_MYSQL_PASSWORD=... legacy/export.sh` if it was changed.
 - Old MinIO versions store objects as plain files. If the export finds MinIO's newer format, it stops;
   copy the buckets with an S3 client into `data/legacy/s3/<bucket>/` instead.
-- Old accounts keep their passwords (MD5 is still accepted). On the first Keycloak login, the portal links the
-  Keycloak account to the old Zotero user with the same email address. Without a matching email it creates a new,
+- Old accounts keep their passwords (MD5 is still accepted). On the first OIDC login, the portal links the
+  OIDC account to the old Zotero user with the same email address. Without a matching email it creates a new,
   empty account, so check the emails of old users (`bin/list-user.sh`) before the first login.
 
 **Restore a backup:** `zcat data/backups/<file>.sql.gz | docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'`.
