@@ -31,6 +31,8 @@ plus our own portal, migrations and scripts. README.md describes the stack, READ
   three when touching login code.
 - Super-user calls to the dataserver go over the internal `backend` network (10.203.77.0/28); the dataserver
   accepts super-user requests only from private addresses.
+- `/translate/*` is proxied to the translation-server for logged-in users only. Keep it that way: the
+  translation server fetches arbitrary URLs, so it stays off the internal networks (own `translate` network).
 - Texts are English and go through `t()`; `lang/de.php` translates them, keyed by the English text. Add every
   new text there too.
 

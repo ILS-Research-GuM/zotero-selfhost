@@ -10,3 +10,6 @@
 [submodule "client/web-library"]
 	path = src/server/web-library
 	url = https://github.com/zotero/web-library
+[submodule "src/server/translation-server"]
+	path = src/server/translation-server
+	url = https://github.com/zotero/translation-server

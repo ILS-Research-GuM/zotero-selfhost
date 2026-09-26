@@ -24,6 +24,7 @@ obsolete, and what is still open. Day-to-day usage is described in [README.md](R
 | [web-library](https://github.com/zotero/web-library) | `db6d03a`, 2021-02-26 | `9f6cf79`, 2026-09-11 (v1.8.2) | 944 commits |
 | [stream-server](https://github.com/zotero/stream-server) | `7e2e57d`, 2020-04-25 | `9dc1725`, 2026-09-02 | 22 commits |
 | [tinymce-clean-server](https://github.com/zotero/tinymce-clean-server) | `5be2a0d`, 2017-06-29 | unchanged (no upstream activity since 2017) | – |
+| [translation-server](https://github.com/zotero/translation-server) | – (not included) | `3a9d176`, 2026-07-31, new | – |
 | [zotero](https://github.com/zotero/zotero) (client) | `2cea1a5`, 2021-03-03 (5.0.96.1) | removed | 5516 commits |
 | [zotero-build](https://github.com/zotero/zotero-build) | `468b2a1`, 2020-04-17 | removed | – |
 | [zotero-standalone-build](https://github.com/zotero/zotero-standalone-build) | `9d00c5c`, 2021-03-02 | removed (merged into `zotero/app/` upstream) | – |
@@ -351,7 +352,7 @@ instead of living on as a diverging fork.
 ### Optional
 
 9. **Server-side full-text search:** an indexer that copies full text from S3/MySQL to Elasticsearch or OpenSearch, then enable `SEARCH_HOSTS`.
-10. **Translation server** ([zotero/translation-server](https://github.com/zotero/translation-server)) for adding items by identifier in the web-library.
+10. ~~Translation server~~: done, proxied by the portal for logged-in users.
 11. **Map OIDC roles or groups** to Zotero groups instead of adding every new user to group 1.
 12. **Propose patch `0005`** (integer policy values) upstream, since it's valid for AWS as well.
 

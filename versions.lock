@@ -1,10 +1,11 @@
 # Upstream versions this stack is built from. Maintained by utils/update.sh.
 # The submodule pointers in git pin the same commits; this file adds the ref names.
-# Repos without release tags (dataserver, stream-server, tinymce-clean-server) are pinned
+# Repos without release tags (dataserver, stream-server, tinymce-clean-server, translation-server) are pinned
 # to a master commit, named master@<commit date>.
 #
 # path                              ref                    commit
 src/server/dataserver               master@2026-09-19      6e091852b8a3e369056f390ba69e5de90cda1134
 src/server/stream-server            master@2026-09-02      9dc1725f71f816a2821c6d8985bc88729b7a4947
 src/server/tinymce-clean-server     master@2017-06-29      5be2a0d367133b728872bee9975beed1c9e74898
+src/server/translation-server       master@2026-07-31      3a9d17614896fc1fea73d7b880ea79273b605275
 src/server/web-library              v1.8.2                 9f6cf7923fbab6f55da46586793ab0a2f9a2dc84

@@ -214,6 +214,36 @@ if (empty($_SESSION['user'])) {
 	startLogin(str_starts_with($uri, '/') && !str_starts_with($uri, '//') ? $uri : '/');
 }
 
+// Translation server for "Add by identifier" and URLs in the web-library. Proxied, so only
+// logged-in users can make it fetch URLs, and no reverse proxy route is needed.
+if (str_starts_with($path, '/translate/')) {
+	$endpoint = substr($path, strlen('/translate/'));
+	if (!in_array($endpoint, ['web', 'search', 'import', 'export'], true) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
+		http_response_code(404);
+		exit;
+	}
+	$query = $_SERVER['QUERY_STRING'] ?? '';
+	$ch = curl_init("http://translation-server:1969/$endpoint" . ($query !== '' ? "?$query" : ''));
+	curl_setopt_array($ch, [
+		CURLOPT_POST => true,
+		CURLOPT_POSTFIELDS => file_get_contents('php://input', false, null, 0, 10 * 1024 * 1024),
+		CURLOPT_HTTPHEADER => ['Content-Type: ' . ($_SERVER['CONTENT_TYPE'] ?? 'text/plain')],
+		CURLOPT_RETURNTRANSFER => true,
+		CURLOPT_TIMEOUT => 60
+	]);
+	$body = curl_exec($ch);
+	if ($body === false) {
+		error_log('Translation server request failed: ' . curl_error($ch));
+		http_response_code(502);
+		exit;
+	}
+	http_response_code(curl_getinfo($ch, CURLINFO_RESPONSE_CODE));
+	header('Content-Type: ' . (curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: 'application/json'));
+	header('Cache-Control: no-store');
+	echo $body;
+	exit;
+}
+
 $accounts = new Accounts();
 $u = $_SESSION['user'];
 // Password logins already know the Zotero user; OIDC logins are mapped (and created on first login)
@@ -279,6 +309,7 @@ $config = [
 	],
 	'websiteUrl' => "$baseURL/",
 	'streamingApiUrl' => getenv('STREAMING_URL'),
+	'translateUrl' => "$baseURL/translate",
 	'libraries' => ['includeMyLibrary' => true, 'includeUserGroups' => true]
 ];
 $menu = [
