@@ -63,6 +63,8 @@ OIDC_LABEL=
 # true: password login next to OIDC, e.g. for external users created with bin/create-user.sh.
 # Empty: only without OIDC.
 PASSWORD_LOGIN=
+# Language of the login pages: en or de. Empty: the browser's language (default English)
+PORTAL_LANGUAGE=
 
 # Commit of src/server/web-library (see versions.lock), updated by utils/update.sh
 WEB_LIBRARY_COMMIT=$(git -C src/server/web-library rev-parse HEAD)

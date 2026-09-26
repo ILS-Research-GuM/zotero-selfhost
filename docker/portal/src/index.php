@@ -15,6 +15,36 @@ $passwordLogin = getenv('PASSWORD_LOGIN') != ''
 	: !$useOIDC;
 
 // Secure cookies only work over HTTPS; plain HTTP setups without a reverse proxy need them off
+// English texts are the base; lang/<language>.php translate them. PORTAL_LANGUAGE forces a
+// language, otherwise the browser's Accept-Language decides.
+function language(): string {
+	$available = array_map(fn($f) => basename($f, '.php'), glob(__DIR__ . '/lang/*.php'));
+	$forced = strtolower((string) getenv('PORTAL_LANGUAGE'));
+	if ($forced !== '') {
+		return in_array($forced, $available) ? $forced : 'en';
+	}
+	foreach (explode(',', $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '') as $part) {
+		$code = strtolower(substr(trim(explode(';', $part)[0]), 0, 2));
+		if ($code === 'en') {
+			return 'en';
+		}
+		if (in_array($code, $available)) {
+			return $code;
+		}
+	}
+	return 'en';
+}
+$language = language();
+$translations = $language === 'en' ? [] : require __DIR__ . "/lang/$language.php";
+
+/**
+ * Translated text; %s placeholders are filled with the (already escaped) arguments
+ */
+function t(string $text, string ...$args): string {
+	global $translations;
+	return vsprintf($translations[$text] ?? $text, $args);
+}
+
 session_set_cookie_params(['secure' => str_starts_with($baseURL, 'https:'), 'httponly' => true, 'samesite' => 'Lax']);
 session_name('zotero_portal');
 session_start();
@@ -32,7 +62,8 @@ function page(string $title, string $body, int $status = 200): never {
 	header('Content-Type: text/html; charset=utf-8');
 	header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
 	$t = htmlspecialchars($title);
-	echo "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\"><title>$t</title>"
+	global $language;
+	echo "<!DOCTYPE html><html lang=\"$language\"><head><meta charset=\"utf-8\"><title>$t</title>"
 		. '<meta name="viewport" content="width=device-width, initial-scale=1">'
 		. '<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}'
 		. 'button{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;cursor:pointer}'
@@ -64,7 +95,7 @@ function oidcLogin(string $returnTo): never {
 	$discovery = json_decode(@file_get_contents(rtrim(getenv('OIDC_ISSUER'), '/') . '/.well-known/openid-configuration'), true);
 	if (empty($discovery['authorization_endpoint'])) {
 		error_log('OIDC discovery failed');
-		page('Anmeldung nicht verfügbar', '<p>Der Anmeldedienst ist gerade nicht erreichbar.</p>', 503);
+		page(t('Login unavailable'), '<p>' . t('The login service is not reachable right now.') . '</p>', 503);
 	}
 	$pending = array_filter($_SESSION['oidcPending'] ?? [], fn($p) => $p['time'] > time() - 900);
 	$pending = array_slice($pending, -9, null, true);
@@ -98,7 +129,7 @@ if ($path === '/signin' && $passwordLogin) {
 	$error = '';
 	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		if (!hash_equals($_SESSION['signinCsrf'] ?? '', $_POST['csrf'] ?? '')) {
-			page('Anfrage abgelehnt', '<p>Das Formular war ungültig. <a href="/signin">Erneut versuchen</a></p>', 403);
+			page(t('Request rejected'), '<p>' . t('The form was invalid.') . ' <a href="/signin">' . t('Try again') . '</a></p>', 403);
 		}
 		$user = (new Accounts())->verifyPassword((string) ($_POST['username'] ?? ''), (string) ($_POST['password'] ?? ''));
 		if ($user) {
@@ -113,17 +144,17 @@ if ($path === '/signin' && $passwordLogin) {
 		// Slow down password guessing
 		sleep(2);
 		http_response_code(401);
-		$error = '<p><b>Benutzername oder Passwort ist falsch.</b></p>';
+		$error = '<p><b>' . t('Wrong username or password.') . '</b></p>';
 	}
 	$_SESSION['signinCsrf'] = $_SESSION['signinCsrf'] ?? bin2hex(random_bytes(16));
-	$oidcButton = !$useOIDC ? '' : '<form action="/oidc/start"><p><button>Anmelden mit '
-		. htmlspecialchars(getenv('OIDC_LABEL') ?: 'Single Sign-On') . '</button></p></form><hr>'
-		. '<p>Oder mit Benutzername und Passwort:</p>';
-	page('Anmelden', $oidcButton . $error
+	$oidcButton = !$useOIDC ? '' : '<form action="/oidc/start"><p><button>'
+		. t('Log in with %s', htmlspecialchars(getenv('OIDC_LABEL') ?: 'Single Sign-On')) . '</button></p></form><hr>'
+		. '<p>' . t('Or with username and password:') . '</p>';
+	page(t('Log in'), $oidcButton . $error
 		. '<form method="post"><input type="hidden" name="csrf" value="' . $_SESSION['signinCsrf'] . '">'
-		. '<p><label>Benutzername oder E-Mail<br><input name="username" autocomplete="username" required autofocus></label></p>'
-		. '<p><label>Passwort<br><input name="password" type="password" autocomplete="current-password" required></label></p>'
-		. '<p><button>Anmelden</button></p></form>', http_response_code() ?: 200);
+		. '<p><label>' . t('Username or email') . '<br><input name="username" autocomplete="username" required autofocus></label></p>'
+		. '<p><label>' . t('Password') . '<br><input name="password" type="password" autocomplete="current-password" required></label></p>'
+		. '<p><button>' . t('Log in') . '</button></p></form>', http_response_code() ?: 200);
 }
 
 // Return from the OIDC provider
@@ -132,7 +163,7 @@ if ($path === '/oidc/callback' && $useOIDC) {
 	$pending = $_SESSION['oidcPending'][$state] ?? null;
 	if (!$pending) {
 		error_log('OIDC callback with unknown state');
-		page('Anmeldung abgelaufen', '<p>Die Anmeldung ist abgelaufen oder wurde in einem anderen Fenster abgeschlossen. <a href="/">Erneut anmelden</a></p>', 400);
+		page(t('Login expired'), '<p>' . t('The login has expired or was completed in another window.') . ' <a href="/">' . t('Log in again') . '</a></p>', 400);
 	}
 	unset($_SESSION['oidcPending'][$state]);
 	$_SESSION['returnTo'] = $pending['returnTo'];
@@ -152,7 +183,7 @@ if ($path === '/oidc/callback' && $useOIDC) {
 	}
 	catch (Throwable $e) {
 		error_log("OIDC login failed: " . $e->getMessage());
-		page('Anmeldung fehlgeschlagen', '<p>Die Anmeldung ist fehlgeschlagen. <a href="/">Erneut versuchen</a></p>', 401);
+		page(t('Login failed'), '<p>' . t('The login failed.') . ' <a href="/">' . t('Try again') . '</a></p>', 401);
 	}
 	session_regenerate_id(true);
 	$returnTo = $_SESSION['returnTo'] ?? '/';
@@ -193,25 +224,25 @@ $name = htmlspecialchars($user['username']);
 if ($path === '/login') {
 	$token = $_REQUEST['session'] ?? '';
 	if (!preg_match('/^[A-Za-z0-9]{1,64}$/', $token)) {
-		page('Ungültiger Link', '<p>Dieser Anmeldelink ist ungültig.</p>', 400);
+		page(t('Invalid link'), '<p>' . t('This login link is invalid.') . '</p>', 400);
 	}
 	[$status, $info] = Api::request('GET', "keys/sessions/$token/info", null, true);
 	if ($status == 410 || $status == 404 || ($info['status'] ?? '') !== 'pending') {
-		page('Link abgelaufen', '<p>Dieser Anmeldelink ist abgelaufen oder wurde schon verwendet. Starte die Anmeldung in Zotero neu.</p>', 410);
+		page(t('Link expired'), '<p>' . t('This login link has expired or was already used. Start the login in Zotero again.') . '</p>', 410);
 	}
 	// A client that was linked to an account before may only log in to that account again
 	if (!empty($info['userID']) && (int) $info['userID'] !== (int) $user['userID']) {
-		page('Anderes Konto', '<p>Dieses Zotero ist mit einem anderen Konto verbunden. Melde dich mit diesem Konto an oder setze die Verknüpfung in Zotero zurück.</p>', 403);
+		page(t('Different account'), '<p>' . t('This Zotero is linked to a different account. Log in with that account or unlink the account in Zotero.') . '</p>', 403);
 	}
 
 	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		if (!hash_equals($_SESSION['csrf'][$token] ?? '', $_POST['csrf'] ?? '')) {
-			page('Anfrage abgelehnt', '<p>Die Bestätigung war ungültig. Öffne den Link aus Zotero erneut.</p>', 403);
+			page(t('Request rejected'), '<p>' . t('The confirmation was invalid. Open the link from Zotero again.') . '</p>', 403);
 		}
 		unset($_SESSION['csrf'][$token]);
 		if (($_POST['action'] ?? '') !== 'allow') {
 			Api::request('DELETE', "keys/sessions/$token");
-			page('Abgebrochen', '<p>Zotero wurde nicht verbunden. Du kannst dieses Fenster schließen.</p>');
+			page(t('Cancelled'), '<p>' . t('Zotero was not connected. You can close this window.') . '</p>');
 		}
 		[$status] = Api::request('POST', 'keys/sessions/complete', [
 			'sessionToken' => $token,
@@ -220,20 +251,20 @@ if ($path === '/login') {
 		], true);
 		if ($status != 204) {
 			error_log("Completing login session failed: $status");
-			page('Fehler', '<p>Zotero konnte nicht verbunden werden. Starte die Anmeldung in Zotero neu.</p>', 500);
+			page(t('Error'), '<p>' . t('Zotero could not be connected. Start the login in Zotero again.') . '</p>', 500);
 		}
-		page('Zotero ist verbunden', "<p>Zotero synchronisiert jetzt mit dem Konto <b>$name</b>. Du kannst dieses Fenster schließen und zu Zotero zurückkehren.</p>");
+		page(t('Zotero is connected'), '<p>' . t('Zotero now syncs with the account %s. You can close this window and return to Zotero.', "<b>$name</b>") . '</p>');
 	}
 
 	// Explicit confirmation, so a login link sent by someone else can't take over the account
 	$_SESSION['csrf'][$token] = bin2hex(random_bytes(16));
 	$csrf = $_SESSION['csrf'][$token];
 	$client = htmlspecialchars($info['clientType'] ?? 'Zotero');
-	page('Zotero verbinden', "<p>Soll <b>$client</b> auf deinem Gerät Zugriff auf deine Zotero-Bibliothek (Konto <b>$name</b>) bekommen?</p>"
-		. '<p>Bestätige nur, wenn du die Anmeldung gerade selbst in Zotero gestartet hast.</p>'
+	page(t('Connect Zotero'), '<p>' . t('Should %s on your device get access to your Zotero library (account %s)?', "<b>$client</b>", "<b>$name</b>") . '</p>'
+		. '<p>' . t('Only confirm if you just started the login in Zotero yourself.') . '</p>'
 		. '<form method="post"><input type="hidden" name="session" value="' . htmlspecialchars($token) . '">'
 		. '<input type="hidden" name="csrf" value="' . $csrf . '">'
-		. '<button name="action" value="allow">Verbinden</button><button name="action" value="deny">Abbrechen</button></form>');
+		. '<button name="action" value="allow">' . t('Connect') . '</button><button name="action" value="deny">' . t('Cancel') . '</button></form>');
 }
 
 // web-library, configured for this user
@@ -253,11 +284,11 @@ $config = [
 $menu = [
 	'desktop' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
-		['label' => $user['username'], 'dropdown' => true, 'truncate' => true, 'entries' => [['label' => 'Abmelden', 'href' => '/logout']]]
+		['label' => $user['username'], 'dropdown' => true, 'truncate' => true, 'entries' => [['label' => t('Log out'), 'href' => '/logout']]]
 	],
 	'mobile' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
-		['label' => 'Abmelden', 'href' => '/logout']
+		['label' => t('Log out'), 'href' => '/logout']
 	]
 ];
 $json = fn($v) => json_encode($v, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP);
