@@ -148,6 +148,11 @@ With OIDC, users are created by the portal on their first login. By hand, e.g. f
   `bin/set-group-role.sh <groupID> <username> admin`.
 - Storage quota for new users comes from `ZOTERO_STORAGE_QUOTA_MB` (default: unlimited).
 
+## User guide
+
+`USER-GUIDE-template.md` is an English/German guide for end users (web library, desktop client setup and
+login). Fill in its placeholders, keep the sections that match your login configuration, and hand it out.
+
 ## Desktop client
 
 Use the official Zotero client. In Settings → Advanced → Config Editor set:
