@@ -25,6 +25,8 @@ services:
   init-data:
     image: alpine:3
     command: ["/init-data.sh"]
+    environment:
+      DOWNLOADS_OWNER: ${DOWNLOADS_OWNER:-0:0}
     volumes:
       - ./docker/init-data/init-data.sh:/init-data.sh:ro
       - ./data:/data
@@ -196,6 +198,9 @@ services:
       API_SCHEME: ${API_SCHEME:?}
       API_AUTHORITY: ${API_AUTHORITY:?}
       STREAMING_URL: ${STREAMING_URL:?}
+    volumes:
+      # Public downloads page and files (/downloads), see README
+      - ./data/downloads:/var/www/downloads:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORTAL_PORT:-8184}:80"
     networks: [default, backend, translate]

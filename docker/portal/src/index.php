@@ -15,20 +15,34 @@ $passwordLogin = getenv('PASSWORD_LOGIN') != ''
 	: !$useOIDC;
 
 // Secure cookies only work over HTTPS; plain HTTP setups without a reverse proxy need them off
-// English texts are the base; lang/<language>.php translate them. PORTAL_LANGUAGE forces a
-// language, otherwise the browser's Accept-Language decides.
+// English texts are the base; lang/<language>.php translate them. Order: the language picked with
+// the switcher (?lang=, remembered in a cookie), else PORTAL_LANGUAGE as the site default, else the
+// browser's Accept-Language, else English.
+function availableLanguages(): array {
+	return array_merge(['en'], array_map(fn($f) => basename($f, '.php'), glob(__DIR__ . '/lang/*.php')));
+}
+
 function language(): string {
-	$available = array_map(fn($f) => basename($f, '.php'), glob(__DIR__ . '/lang/*.php'));
-	$forced = strtolower((string) getenv('PORTAL_LANGUAGE'));
-	if ($forced !== '') {
-		return in_array($forced, $available) ? $forced : 'en';
+	$available = availableLanguages();
+	$picked = strtolower((string) ($_GET['lang'] ?? ''));
+	if (in_array($picked, $available, true)) {
+		setcookie('zotero_portal_lang', $picked, [
+			'expires' => time() + 365 * 86400, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax',
+			'secure' => str_starts_with((string) getenv('WEB_LIBRARY_URL'), 'https:')
+		]);
+		return $picked;
+	}
+	$cookie = strtolower((string) ($_COOKIE['zotero_portal_lang'] ?? ''));
+	if (in_array($cookie, $available, true)) {
+		return $cookie;
+	}
+	$default = strtolower((string) getenv('PORTAL_LANGUAGE'));
+	if (in_array($default, $available, true)) {
+		return $default;
 	}
 	foreach (explode(',', $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '') as $part) {
 		$code = strtolower(substr(trim(explode(';', $part)[0]), 0, 2));
-		if ($code === 'en') {
-			return 'en';
-		}
-		if (in_array($code, $available)) {
+		if (in_array($code, $available, true)) {
 			return $code;
 		}
 	}
@@ -57,18 +71,124 @@ function oidc(): OpenIDConnectClient {
 	return $oidc;
 }
 
-function page(string $title, string $body, int $status = 200): never {
+/** Links to switch the language of the portal pages; empty if there is only one language */
+function languageSwitcher(): string {
+	global $language, $path;
+	$names = ['en' => 'English', 'de' => 'Deutsch'];
+	$langs = availableLanguages();
+	if (count($langs) < 2) {
+		return '';
+	}
+	$links = array_map(fn($l) => $l === $language
+		? '<b>' . htmlspecialchars($names[$l] ?? $l) . '</b>'
+		: '<a href="' . htmlspecialchars($path) . '?lang=' . $l . '" hreflang="' . $l . '">' . htmlspecialchars($names[$l] ?? $l) . '</a>', $langs);
+	return '<nav class="lang">' . implode('', $links) . '</nav>';
+}
+
+function page(string $title, string $body, int $status = 200, bool $wide = false): never {
 	http_response_code($status);
 	header('Content-Type: text/html; charset=utf-8');
-	header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+	header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'");
 	$t = htmlspecialchars($title);
 	global $language;
 	echo "<!DOCTYPE html><html lang=\"$language\"><head><meta charset=\"utf-8\"><title>$t</title>"
 		. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-		. '<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}'
+		. '<style>body{font:16px/1.5 system-ui,sans-serif;max-width:' . ($wide ? '48rem' : '32rem') . ';margin:4rem auto;padding:0 1rem;color:#222}'
 		. 'button{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;cursor:pointer}'
-		. '@media(prefers-color-scheme:dark){body{background:#1e1e1e;color:#ddd}}</style>'
-		. "</head><body><h1>$t</h1>$body</body></html>";
+		. 'code{background:rgba(127,127,127,.15);padding:0 .2em;border-radius:3px}table{border-collapse:collapse}td,th{padding:.2rem .8rem .2rem 0;text-align:left}'
+		. 'a{color:#2563eb}@media(prefers-color-scheme:dark){body{background:#1e1e1e;color:#ddd}a{color:#7aa7ff}}'
+		. '.lang{float:right;font-size:.85rem}.lang a,.lang b{margin-left:.5rem}</style>'
+		. "</head><body>" . languageSwitcher() . "<h1>$t</h1>$body</body></html>";
+	exit;
+}
+
+/**
+ * Downloads: public files from DOWNLOADS_DIR (bind-mounted data/downloads), e.g. plugins and their
+ * update manifests. Public on purpose: Zotero checks plugin updates without a session.
+ *   /downloads              the page: DOWNLOADS_DIR/index.html (an HTML fragment written by the
+ *                           admin), or a plain file list if there is none
+ *   /downloads/<dir>/latest redirect to the newest file in <dir> (by version in the file name)
+ *   /downloads/<path>       the file itself
+ */
+const DOWNLOADS_DIR = '/var/www/downloads';
+const DOWNLOAD_TYPES = [
+	'xpi' => 'application/x-xpinstall', 'json' => 'application/json', 'pdf' => 'application/pdf',
+	'txt' => 'text/plain; charset=utf-8', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'svg' => 'image/svg+xml',
+	'zip' => 'application/zip'
+];
+
+function downloadFiles(string $dir = ''): array {
+	$base = realpath(DOWNLOADS_DIR . ($dir !== '' ? "/$dir" : ''));
+	if ($base === false || !is_dir($base)) {
+		return [];
+	}
+	$files = [];
+	$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS));
+	foreach ($it as $file) {
+		$ext = strtolower($file->getExtension());
+		if ($file->isFile() && isset(DOWNLOAD_TYPES[$ext]) && !str_starts_with($file->getFilename(), '.')) {
+			$files[] = substr($file->getPathname(), strlen(realpath(DOWNLOADS_DIR)) + 1);
+		}
+	}
+	sort($files);
+	return $files;
+}
+
+/** Whether there is anything to download, so login page and menu only link to a non-empty page. */
+function hasDownloads(): bool {
+	return downloadFiles() !== [];
+}
+
+/** Link to the downloads page for the sign-in page, or '' if there are no downloads. */
+function downloadsHint(): string {
+	return hasDownloads() ? '<hr><p><a href="/downloads">' . t('Downloads: Zotero plugins and setup') . '</a></p>' : '';
+}
+
+function handleDownloads(string $path): never {
+	global $baseURL;
+	$rel = trim(substr($path, strlen('/downloads')), '/');
+	if ($rel === '') {
+		// index.<language>.html, else index.html
+		global $language;
+		foreach (["index.$language.html", 'index.html'] as $name) {
+			if (is_file(DOWNLOADS_DIR . "/$name")) {
+				page(t('Downloads'), file_get_contents(DOWNLOADS_DIR . "/$name"), 200, true);
+			}
+		}
+		$list = array_filter(downloadFiles(), fn($f) => !preg_match('/^index(\\.[a-z]{2})?\\.html$/', $f));
+		page(t('Downloads'), $list
+			? '<ul>' . implode('', array_map(fn($f) => '<li><a href="/downloads/' . htmlspecialchars($f) . '">' . htmlspecialchars($f) . '</a></li>', $list)) . '</ul>'
+			: '<p>' . t('There are no downloads.') . '</p>', 200, true);
+	}
+	if (preg_match('#^([A-Za-z0-9._-]+)/latest$#', $rel, $m)) {
+		$candidates = array_filter(downloadFiles($m[1]), fn($f) => !str_ends_with($f, '.json'));
+		// Newest by the version number in the file name (name-1.2.10.xpi > name-1.2.9.xpi)
+		usort($candidates, function ($a, $b) {
+			$v = fn($f) => preg_match('/(\d+(?:\.\d+)+)/', basename($f), $x) ? $x[1] : '0';
+			return version_compare($v($b), $v($a));
+		});
+		if (!$candidates) {
+			page(t('Not found'), '<p>' . t('This download does not exist.') . '</p>', 404);
+		}
+		header('Location: ' . $baseURL . '/downloads/' . $m[1] . '/' . rawurlencode(basename($candidates[0])), true, 302);
+		exit;
+	}
+	// Only regular files of an allowed type inside DOWNLOADS_DIR; no dot files, no ".."
+	$root = realpath(DOWNLOADS_DIR);
+	$file = realpath(DOWNLOADS_DIR . '/' . rawurldecode($rel));
+	$ext = strtolower(pathinfo((string) $file, PATHINFO_EXTENSION));
+	if ($root === false || $file === false || !str_starts_with($file, "$root/") || !is_file($file)
+		|| !isset(DOWNLOAD_TYPES[$ext]) || str_contains(substr($file, strlen($root)), '/.')) {
+		page(t('Not found'), '<p>' . t('This download does not exist.') . '</p>', 404);
+	}
+	header('Content-Type: ' . DOWNLOAD_TYPES[$ext]);
+	header('Content-Length: ' . filesize($file));
+	header('X-Content-Type-Options: nosniff');
+	header('Cache-Control: ' . ($ext === 'json' ? 'no-cache' : 'public, max-age=300'));
+	if ($ext !== 'json' && $ext !== 'txt') {
+		header('Content-Disposition: attachment; filename="' . basename($file) . '"');
+	}
+	readfile($file);
 	exit;
 }
 
@@ -154,7 +274,7 @@ if ($path === '/signin' && $passwordLogin) {
 		. '<form method="post"><input type="hidden" name="csrf" value="' . $_SESSION['signinCsrf'] . '">'
 		. '<p><label>' . t('Username or email') . '<br><input name="username" autocomplete="username" required autofocus></label></p>'
 		. '<p><label>' . t('Password') . '<br><input name="password" type="password" autocomplete="current-password" required></label></p>'
-		. '<p><button>' . t('Log in') . '</button></p></form>', http_response_code() ?: 200);
+		. '<p><button>' . t('Log in') . '</button></p></form>' . downloadsHint(), http_response_code() ?: 200);
 }
 
 // Return from the OIDC provider
@@ -200,6 +320,10 @@ if ($path === '/logout') {
 	}
 	header("Location: $baseURL/");
 	exit;
+}
+
+if ($path === '/downloads' || str_starts_with($path, '/downloads/')) {
+	handleDownloads($path);
 }
 
 // Everything else requires a login
@@ -312,13 +436,16 @@ $config = [
 	'translateUrl' => "$baseURL/translate",
 	'libraries' => ['includeMyLibrary' => true, 'includeUserGroups' => true]
 ];
+$downloads = hasDownloads() ? [['label' => t('Downloads'), 'href' => '/downloads']] : [];
 $menu = [
 	'desktop' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
+		...$downloads,
 		['label' => $user['username'], 'dropdown' => true, 'truncate' => true, 'entries' => [['label' => t('Log out'), 'href' => '/logout']]]
 	],
 	'mobile' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
+		...$downloads,
 		['label' => t('Log out'), 'href' => '/logout']
 	]
 ];

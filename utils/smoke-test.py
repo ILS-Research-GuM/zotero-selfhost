@@ -148,6 +148,14 @@ def portal_tests():
 	check('Portal: callback with unknown state rejected', status == 400, status)
 	status, _, _ = request('GET', PORTAL + '/', headers={'Sec-Fetch-Mode': 'cors'})
 	check('Portal: background requests get 401 instead of a login redirect', status == 401, status)
+	# Downloads are public (Zotero checks plugin updates without a session); the directory may be empty
+	status, _, _ = request('GET', PORTAL + '/downloads')
+	check('Portal: downloads page reachable without login', status == 200, status)
+	# 404 from the portal, or a login redirect if a reverse proxy normalized the path first
+	status, _, _ = request('GET', PORTAL + '/downloads/../.env')
+	check('Portal: downloads refuse paths outside the directory', status in (302, 404), status)
+	status, _, _ = request('GET', PORTAL + '/downloads/%2e%2e/%2eenv')
+	check('Portal: downloads refuse encoded paths outside the directory', status in (302, 404), status)
 
 
 def portal_password_tests(oidc):

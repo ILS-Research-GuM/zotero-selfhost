@@ -105,8 +105,9 @@ The portal signs users in with an OpenID Connect provider, with username and pas
 | `OIDC_ISSUER` set | Straight to the OIDC provider |
 | `OIDC_ISSUER` set, `PASSWORD_LOGIN=true` | Sign-in page with a button for the OIDC login (text: `OIDC_LABEL`) and the password form, e.g. for external users without an account at the provider |
 
-The portal's pages are in English, or in German for browsers that prefer it; `PORTAL_LANGUAGE=en|de` fixes
-the language. Translations are in `docker/portal/src/lang/<language>.php`, keyed by the English text.
+The portal's pages are in English or German. A switcher on each page lets users pick the language (kept in
+a cookie); otherwise `PORTAL_LANGUAGE=en|de` sets the default, and without it the browser's language decides.
+Translations are in `docker/portal/src/lang/<language>.php`, keyed by the English text.
 
 The password check accepts the same hashes as the dataserver (bcrypt, and salted SHA1 or MD5 from older
 installations). Failed attempts are delayed by two seconds. Accounts that the portal created for OIDC users
@@ -165,6 +166,23 @@ Use the official Zotero client. In Settings → Advanced → Config Editor set:
 
 Restart Zotero, then click "Log In" under Settings → Account (older versions: Sync). The browser opens the
 portal login. Texts such as "Sync with zotero.org" and links to the zotero.org website stay unchanged.
+
+## Downloads
+
+The portal serves `data/downloads/` at `/downloads`, **without login**: Zotero checks plugin updates
+(`updates.json`) without a session, so everything in that directory is public.
+
+- `/downloads` shows `data/downloads/index.<language>.html` (e.g. `index.en.html`, `index.de.html`), else
+  `index.html`: an HTML fragment you write yourself (e.g. plugins, links, the desktop client setup). Without
+  one, the page lists the files.
+- `/downloads/<path>` returns the file. Allowed types: xpi, json, pdf, txt, png, jpg, svg, zip; dot files
+  and paths outside the directory are refused.
+- `/downloads/<dir>/latest` redirects to the newest file in `<dir>` by the version number in its name
+  (`plugin-1.2.10.xpi` beats `plugin-1.2.9.xpi`), so the page can link to "the latest version".
+
+The directory is mounted read-only; changes take effect immediately, no restart needed. `init-data` creates it
+and gives it to `DOWNLOADS_OWNER` (`uid:gid`, default root), so a host user can publish without root.
+Files must be world-readable.
 
 ## Data and backups
 
