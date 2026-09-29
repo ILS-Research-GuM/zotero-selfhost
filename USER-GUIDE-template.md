@@ -100,6 +100,14 @@ Every user is a member of this group and can **read** it. Adding or changing ent
 people. If you'd like to contribute, contact {{CONTACT}}.
 <!-- [END] -->
 
+### Your own groups
+
+To share references with colleagues, create a group: in the web library, open **Groups** in the menu at
+the top ({{WEB_LIBRARY_URL}}/settings/groups), then **New group**. Add colleagues by username or email; they appear
+once they have logged in at least once. You decide whether all members or only admins may edit. In the
+desktop app, the group shows up with the next sync. Don't use **New Group…** in the desktop app: it opens
+zotero.org, not this server.
+
 ### Good to know
 
 - **Switching from zotero.org:** If your Zotero was connected to a zotero.org account, first choose
@@ -190,6 +198,14 @@ Zotero **Abbrechen** klicken, beide Einstellungen prüfen, Zotero neu starten un
 Alle Nutzerinnen und Nutzer sind Mitglied dieser Gruppe und können sie **lesen**. Einträge hinzufügen oder
 ändern dürfen nur ausgewählte Personen. Wer beitragen möchte, wendet sich an {{CONTACT_DE}}.
 <!-- [END] -->
+
+### Eigene Gruppen
+
+Um Literatur mit Kollegen zu teilen, lege eine Gruppe an: In der Web-Bibliothek oben im Menü **Gruppen**
+öffnen ({{WEB_LIBRARY_URL}}/settings/groups), dann **Neue Gruppe**. Kollegen fügst du über Benutzernamen oder E-Mail
+hinzu; sie erscheinen, sobald sie sich einmal angemeldet haben. Du legst fest, ob alle Mitglieder oder nur
+Admins bearbeiten dürfen. In der Desktop-App erscheint die Gruppe mit der nächsten Synchronisation.
+**Neue Gruppe…** in der Desktop-App bitte nicht verwenden: Das öffnet zotero.org, nicht diesen Server.
 
 ### Gut zu wissen
 

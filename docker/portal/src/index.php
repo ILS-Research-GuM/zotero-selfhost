@@ -4,6 +4,7 @@
 // PASSWORD_LOGIN is on (default: only without OIDC), or both side by side
 require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/Accounts.php';
+require __DIR__ . '/Groups.php';
 
 use Jumbojett\OpenIDConnectClient;
 
@@ -421,6 +422,273 @@ if ($path === '/login') {
 		. '<button name="action" value="allow">' . t('Connect') . '</button><button name="action" value="deny">' . t('Cancel') . '</button></form>');
 }
 
+/**
+ * Group management: /settings/groups lists the user's groups and creates new ones,
+ * /settings/groups/<id> manages one group. Not under /groups/, which are web-library paths.
+ * Changes are POSTs that redirect back with a message (see Groups for the permission rules).
+ */
+function handleGroups(array $user, ?int $groupID): never {
+	global $baseURL;
+	$groups = new Groups();
+	$me = (int) $user['userID'];
+	$_SESSION['groupsCsrf'] ??= bin2hex(random_bytes(16));
+
+	if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+		if (!hash_equals($_SESSION['groupsCsrf'], (string) ($_POST['csrf'] ?? ''))) {
+			page(t('Request rejected'), '<p>' . t('The form was invalid.') . ' <a href="/settings/groups">' . t('Try again') . '</a></p>', 403);
+		}
+		[$error, $message, $location] = groupAction($groups, $me, $groupID, (string) ($_POST['action'] ?? ''));
+		$_SESSION['groupsFlash'] = ['error' => $error, 'text' => $message];
+		header("Location: $baseURL$location", true, 303);
+		exit;
+	}
+
+	$flash = $_SESSION['groupsFlash'] ?? null;
+	unset($_SESSION['groupsFlash']);
+	$body = '<style>td form{display:inline}td button{padding:.1rem .6rem;font-size:.9rem}'
+		. 'input:not([type=checkbox]),textarea,select{font:inherit;width:100%;box-sizing:border-box}'
+		. 'tr{border-bottom:1px solid rgba(127,127,127,.3)}.error{color:#c00}.ok{color:#080}</style>'
+		. ($flash ? '<p class="' . ($flash['error'] ? 'error' : 'ok') . '"><b>' . htmlspecialchars($flash['text']) . '</b></p>' : '');
+
+	if ($groupID === null) {
+		groupsPage($groups, $me, $body);
+	}
+	$group = $groups->get($groupID, $me);
+	if (!$group) {
+		page(t('Not found'), '<p>' . t('This group does not exist or you are not a member.') . ' <a href="/settings/groups">' . t('Groups') . '</a></p>', 404);
+	}
+	groupPage($groups, $group, $me, $body);
+}
+
+function groupRoleName(string $role): string {
+	return ['owner' => t('Owner'), 'admin' => t('Admin'), 'member' => t('Member')][$role] ?? $role;
+}
+
+function groupLibraryURL(array $group): string {
+	$slug = trim(preg_replace('/[^a-z0-9]+/', '_', strtolower($group['name'])), '_');
+	return "/groups/{$group['groupID']}/$slug/library";
+}
+
+function groupCsrfField(): string {
+	return '<input type="hidden" name="csrf" value="' . $_SESSION['groupsCsrf'] . '">';
+}
+
+/** Fields for name, description and who may edit, prefilled from $group */
+function groupFields(array $group = []): string {
+	$e = fn($s) => htmlspecialchars((string) $s);
+	$editing = $group['libraryEditing'] ?? 'members';
+	$option = fn($value, $label) => '<option value="' . $value . '"' . ($editing === $value ? ' selected' : '') . ">$label</option>";
+	return '<p><label>' . t('Name') . '<br><input name="name" maxlength="100" required value="' . $e($group['name'] ?? '') . '"></label></p>'
+		. '<p><label>' . t('Description (optional)') . '<br><textarea name="description" rows="2" maxlength="1000">' . $e($group['description'] ?? '') . '</textarea></label></p>'
+		. '<p><label>' . t('Who can add and change items and files?') . '<br><select name="editing">'
+		. $option('members', t('All members')) . $option('admins', t('Only owner and admins')) . '</select></label></p>';
+}
+
+function groupsPage(Groups $groups, int $me, string $body): never {
+	$e = fn($s) => htmlspecialchars((string) $s);
+	$rows = '';
+	foreach ($groups->forUser($me) as $g) {
+		$rows .= '<tr><td><a href="' . $e(groupLibraryURL($g)) . '">' . $e($g['name']) . '</a></td>'
+			. '<td>' . groupRoleName($g['role']) . '</td><td>' . (int) $g['members'] . '</td>'
+			. '<td><a href="/settings/groups/' . (int) $g['groupID'] . '">' . t('Manage') . '</a></td></tr>';
+	}
+	$body .= '<p><a href="/">' . t('Back to the library') . '</a></p>'
+		. ($rows
+			? '<table><tr><th>' . t('Group') . '</th><th>' . t('Your role') . '</th><th>' . t('Members') . '</th><th></th></tr>' . $rows . '</table>'
+			: '<p>' . t('You are not a member of any group yet.') . '</p>')
+		. '<h2>' . t('New group') . '</h2>'
+		. '<p>' . t('Groups are private: only their members see them. You become the owner and can then add colleagues.') . '</p>'
+		. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="create">'
+		. groupFields() . '<p><button>' . t('Create group') . '</button></p></form>';
+	page(t('Groups'), $body, 200, true);
+}
+
+function groupPage(Groups $groups, array $group, int $me, string $body): never {
+	$e = fn($s) => htmlspecialchars((string) $s);
+	$id = (int) $group['groupID'];
+	$isOwner = $group['role'] === 'owner';
+	$canManage = $isOwner || $group['role'] === 'admin';
+	$members = $groups->members($id);
+	$button = fn($action, $userID, $label, $extra = '') => '<form method="post">' . groupCsrfField()
+		. '<input type="hidden" name="action" value="' . $action . '"><input type="hidden" name="user" value="' . (int) $userID . '">'
+		. $extra . "<button>$label</button></form> ";
+
+	$rows = '';
+	foreach ($members as $m) {
+		$actions = '';
+		if ($m['role'] !== 'owner' && (int) $m['userID'] !== $me) {
+			if ($isOwner) {
+				$actions .= $m['role'] === 'admin'
+					? $button('role', $m['userID'], t('Make member'), '<input type="hidden" name="role" value="member">')
+					: $button('role', $m['userID'], t('Make admin'), '<input type="hidden" name="role" value="admin">');
+			}
+			if ($isOwner || ($canManage && $m['role'] === 'member')) {
+				$actions .= $button('remove', $m['userID'], t('Remove'));
+			}
+		}
+		$rows .= '<tr><td>' . $e($m['username']) . ((int) $m['userID'] === $me ? ' (' . t('you') . ')' : '') . '</td>'
+			. '<td>' . groupRoleName($m['role']) . "</td><td>$actions</td></tr>";
+	}
+
+	$body .= '<p><a href="' . $e(groupLibraryURL($group)) . '">' . t('Open library') . '</a> · <a href="/settings/groups">' . t('All groups') . '</a></p>'
+		. ($group['description'] !== '' ? '<p>' . nl2br($e($group['description'])) . '</p>' : '')
+		. '<p>' . t('Your role: %s.', groupRoleName($group['role'])) . ' '
+		. ($group['libraryEditing'] === 'members' ? t('All members can add and change items and files.') : t('Only owner and admins can add and change items and files.')) . '</p>'
+		. '<h2>' . t('Members') . '</h2><table>' . $rows . '</table>';
+
+	if ($canManage) {
+		$options = implode('', array_map(fn($u) => '<option value="' . $e($u) . '">', $groups->usernames()));
+		$body .= '<h2>' . t('Add colleague') . '</h2>'
+			. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="add">'
+			. '<p><label>' . t('Username or email') . '<br><input name="login" list="accounts" required autocomplete="off"></label>'
+			. '<datalist id="accounts">' . $options . '</datalist></p>'
+			. '<p>' . t('Colleagues appear here after they have logged in once. New members can read; whether they can edit depends on the group settings. Admins can also manage members.') . '</p>'
+			. '<p><button>' . t('Add') . '</button></p></form>';
+	}
+
+	if ($isOwner) {
+		$others = array_filter($members, fn($m) => $m['role'] !== 'owner');
+		$body .= '<h2>' . t('Settings') . '</h2>'
+			. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="settings">'
+			. groupFields($group) . '<p><button>' . t('Save') . '</button></p></form>';
+		if ($others) {
+			$body .= '<h2>' . t('Transfer ownership') . '</h2>'
+				. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="transfer">'
+				. '<p><select name="user">' . implode('', array_map(fn($m) => '<option value="' . (int) $m['userID'] . '">' . $e($m['username']) . '</option>', $others)) . '</select></p>'
+				. '<p><label><input type="checkbox" name="confirm" value="1" required> ' . t('I want to hand the group over. I stay in the group as admin.') . '</label></p>'
+				. '<p><button>' . t('Transfer ownership') . '</button></p></form>';
+		}
+		$body .= '<h2>' . t('Delete group') . '</h2>'
+			. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="delete">'
+			. '<p><label><input type="checkbox" name="confirm" value="1" required> ' . t('Delete the group with all its items and files for all members. This cannot be undone.') . '</label></p>'
+			. '<p><button>' . t('Delete group') . '</button></p></form>';
+	}
+	else {
+		$body .= '<h2>' . t('Leave group') . '</h2>'
+			. '<form method="post">' . groupCsrfField() . '<input type="hidden" name="action" value="leave">'
+			. '<p><label><input type="checkbox" name="confirm" value="1" required> ' . t('I want to leave the group. Only an owner or admin can add me again.') . '</label></p>'
+			. '<p><button>' . t('Leave group') . '</button></p></form>';
+	}
+	page($group['name'], $body, 200, true);
+}
+
+/**
+ * Carries out a form action. Returns [error?, message, where to go next].
+ */
+function groupAction(Groups $groups, int $me, ?int $groupID, string $action): array {
+	$list = '/settings/groups';
+	if ($groupID === null) {
+		if ($action !== 'create') {
+			return [true, t('The form was invalid.'), $list];
+		}
+		$fields = Groups::validate($_POST);
+		if (isset($fields['error'])) {
+			return [true, t($fields['error']), $list];
+		}
+		try {
+			$id = $groups->create($me, $fields['name'], $fields['description'], $fields['editing']);
+		}
+		catch (Throwable $e) {
+			error_log($e->getMessage());
+			return [true, t('The change could not be saved.'), $list];
+		}
+		return [false, t('The group was created. Now add your colleagues.'), "$list/$id"];
+	}
+
+	$here = "$list/$groupID";
+	$group = $groups->get($groupID, $me);
+	if (!$group) {
+		return [true, t('This group does not exist or you are not a member.'), $list];
+	}
+	$isOwner = $group['role'] === 'owner';
+	$canManage = $isOwner || $group['role'] === 'admin';
+	$targetID = (int) ($_POST['user'] ?? 0);
+	$target = null;
+	foreach ($groups->members($groupID) as $m) {
+		if ((int) $m['userID'] === $targetID) {
+			$target = $m;
+		}
+	}
+	$denied = [true, t('You are not allowed to do that.'), $here];
+	$confirmed = ($_POST['confirm'] ?? '') === '1';
+
+	try {
+		switch ($action) {
+			case 'settings':
+				if (!$isOwner) {
+					return $denied;
+				}
+				$fields = Groups::validate($_POST);
+				if (isset($fields['error'])) {
+					return [true, t($fields['error']), $here];
+				}
+				$groups->update($group, $fields['name'], $fields['description'], $fields['editing']);
+				return [false, t('The settings were saved.'), $here];
+
+			case 'add':
+				if (!$canManage) {
+					return $denied;
+				}
+				$login = trim((string) ($_POST['login'] ?? ''));
+				$account = $groups->findUser($login);
+				if (!$account) {
+					return [true, t('There is no account %s. Colleagues get an account when they log in for the first time.', $login), $here];
+				}
+				if ($groups->get($groupID, (int) $account['userID'])) {
+					return [true, t('%s is already a member.', $account['username']), $here];
+				}
+				$groups->setRole($groupID, (int) $account['userID'], 'member');
+				return [false, t('%s was added.', $account['username']), $here];
+
+			case 'role':
+				$role = (string) ($_POST['role'] ?? '');
+				if (!$isOwner || !$target || $target['role'] === 'owner' || !in_array($role, ['member', 'admin'], true)) {
+					return $denied;
+				}
+				$groups->setRole($groupID, $targetID, $role);
+				return [false, t('%s is now %s.', $target['username'], groupRoleName($role)), $here];
+
+			case 'remove':
+				if (!$target || $target['role'] === 'owner' || $targetID === $me
+						|| !($isOwner || ($canManage && $target['role'] === 'member'))) {
+					return $denied;
+				}
+				$groups->remove($groupID, $targetID);
+				return [false, t('%s was removed.', $target['username']), $here];
+
+			case 'transfer':
+				if (!$isOwner || !$target || $target['role'] === 'owner' || !$confirmed) {
+					return $denied;
+				}
+				$groups->setRole($groupID, $targetID, 'owner');
+				return [false, t('%s is now the owner.', $target['username']), $here];
+
+			case 'leave':
+				if ($isOwner || !$confirmed) {
+					return $denied;
+				}
+				$groups->remove($groupID, $me);
+				return [false, t('You left the group %s.', $group['name']), $list];
+
+			case 'delete':
+				if (!$isOwner || !$confirmed) {
+					return $denied;
+				}
+				$groups->delete($groupID);
+				return [false, t('The group %s was deleted.', $group['name']), $list];
+		}
+	}
+	catch (Throwable $e) {
+		error_log($e->getMessage());
+		return [true, t('The change could not be saved.'), $here];
+	}
+	return [true, t('The form was invalid.'), $here];
+}
+
+if ($path === '/settings/groups' || preg_match('#^/settings/groups/(\d+)$#', $path, $groupMatch)) {
+	handleGroups($user, isset($groupMatch[1]) ? (int) $groupMatch[1] : null);
+}
+
 // web-library, configured for this user
 $config = [
 	'userId' => (string) $user['userID'],
@@ -440,11 +708,13 @@ $downloads = hasDownloads() ? [['label' => t('Downloads'), 'href' => '/downloads
 $menu = [
 	'desktop' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
+		['label' => t('Groups'), 'href' => '/settings/groups'],
 		...$downloads,
 		['label' => $user['username'], 'dropdown' => true, 'truncate' => true, 'entries' => [['label' => t('Log out'), 'href' => '/logout']]]
 	],
 	'mobile' => [
 		['label' => 'My Library', 'href' => '/', 'active' => true],
+		['label' => t('Groups'), 'href' => '/settings/groups'],
 		...$downloads,
 		['label' => t('Log out'), 'href' => '/logout']
 	]

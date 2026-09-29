@@ -158,8 +158,8 @@ def portal_tests():
 	check('Portal: downloads refuse encoded paths outside the directory', status in (302, 404), status)
 
 
-def portal_password_tests(oidc):
-	"""Password login: sign-in page, wrong password rejected, login as the admin user"""
+def portal_session():
+	"""A browser session with the portal: get(path, body=None, headers=None), POST if body is given"""
 	# Cookies by hand: the session cookie is secure when WEB_LIBRARY_URL is https, even if the
 	# portal is reached over plain HTTP locally
 	cookie = {}
@@ -176,7 +176,23 @@ def portal_password_tests(oidc):
 			k, v = c.split(';', 1)[0].split('=', 1)
 			cookie[k] = v
 		return status, headers, data.decode(errors='replace')
+	return get
 
+
+def csrf_of(page):
+	return page.split('name="csrf" value="', 1)[-1].split('"', 1)[0]
+
+
+def password_login(get, username, password):
+	get('/settings/groups')
+	_, _, page = get('/signin')
+	status, _, _ = get('/signin', {'csrf': csrf_of(page), 'username': username, 'password': password})
+	return status == 302
+
+
+def portal_password_tests(oidc):
+	"""Password login: sign-in page, wrong password rejected, login as the admin user"""
+	get = portal_session()
 	base = ENV['WEB_LIBRARY_URL'].rstrip('/')
 	status, headers, _ = get('/login?session=smoketest')
 	check('Portal: login required, redirects to the password form',
@@ -195,10 +211,82 @@ def portal_password_tests(oidc):
 	status, _, page = get('/')
 	check('Portal: web-library page with user configuration', status == 200 and '"apiKey"' in page
 		and '"translateUrl"' in page, status)
+	check('Portal: web-library menu links to the group management', '"href":"/settings/groups"' in page)
 	# Needs internet access from the translation server (doi.org, Crossref)
 	status, _, body = get('/translate/search', '10.1038/nature12373', {'Content-Type': 'text/plain', 'Sec-Fetch-Mode': 'cors'})
 	check('Portal: translation server resolves a DOI', status == 200 and 'Nanometre-scale thermometry' in body,
 		f"{status} {body[:200]}")
+	adminID = page.split('"userId":"', 1)[-1].split('"', 1)[0]
+	portal_group_tests(get, adminID)
+
+
+def portal_group_tests(admin, adminID):
+	"""Group management in the portal, with a temporary second account as colleague"""
+	suffix = os.urandom(4).hex()
+	colleague, password = f'smoketest-{suffix}', os.urandom(12).hex()
+	out = subprocess.run(['docker', 'compose', 'exec', '-T', 'dataserver', '/var/www/zotero/misc/create-user.sh',
+		colleague, password, f'{colleague}@example.org'], cwd=ROOT, capture_output=True, text=True)
+	if not check('Groups: temporary colleague account created', out.returncode == 0, out.stderr.strip()):
+		return
+	colleagueID = out.stdout.strip().rsplit(' ', 1)[-1]
+	other = portal_session()
+	groupPath = None
+
+	def post(get, path, data):
+		"""Submits a form and returns the page it redirects to"""
+		_, _, page = get(path)
+		status, headers, _ = get(path, {'csrf': csrf_of(page), **data})
+		location = headers.get('Location', '')
+		target = urllib.parse.urlsplit(location).path if status == 303 else path
+		return target, get(target)[2]
+
+	try:
+		status, _, page = admin('/settings/groups')
+		check('Groups: overview page served', status == 200 and 'name="action" value="create"' in page, status)
+		groupPath, page = post(admin, '/settings/groups', {'action': 'create', 'name': f'Smoke test {suffix}',
+			'description': '', 'editing': 'members'})
+		ok = groupPath.startswith('/settings/groups/') and 'class="ok"' in page
+		if not check('Groups: group created, owner lands on its page', ok, groupPath):
+			groupPath = None
+			return
+		status, _, _ = admin(groupPath, {'csrf': 'bogus', 'action': 'delete', 'confirm': '1'})
+		check('Groups: form without valid CSRF token rejected', status == 403, status)
+
+		_, page = post(admin, groupPath, {'action': 'add', 'login': 'no-such-account'})
+		check('Groups: unknown account not added', 'class="error"' in page)
+		_, page = post(admin, groupPath, {'action': 'add', 'login': f'{colleague}@example.org'})
+		check('Groups: colleague added by email', 'class="ok"' in page and colleague in page)
+
+		if not check('Groups: colleague logs in', password_login(other, colleague, password)):
+			return
+		status, _, page = other(groupPath)
+		check('Groups: member sees the group', status == 200 and 'value="leave"' in page and 'value="delete"' not in page, status)
+		_, page = post(other, groupPath, {'action': 'delete', 'confirm': '1'})
+		check('Groups: member cannot delete the group', 'class="error"' in page and admin(groupPath)[0] == 200)
+		_, page = post(other, groupPath, {'action': 'remove', 'user': adminID})
+		check('Groups: member cannot remove the owner', 'class="error"' in page)
+
+		_, page = post(admin, groupPath, {'action': 'role', 'user': colleagueID, 'role': 'admin'})
+		check('Groups: owner makes the colleague admin', 'class="ok"' in page)
+		_, page = post(admin, groupPath, {'action': 'settings', 'name': f'Smoke test {suffix} renamed',
+			'description': 'Test', 'editing': 'admins'})
+		check('Groups: owner changes the settings', 'class="ok"' in page and f'Smoke test {suffix} renamed' in page)
+		_, page = post(other, groupPath, {'action': 'settings', 'name': 'Taken over', 'description': '', 'editing': 'members'})
+		check('Groups: admin cannot change the settings', 'class="error"' in page)
+
+		_, page = post(admin, groupPath, {'action': 'transfer', 'user': colleagueID, 'confirm': '1'})
+		check('Groups: owner hands the group over', 'class="ok"' in page)
+		_, page = post(other, groupPath, {'action': 'delete', 'confirm': '1'})
+		status, _, _ = admin(groupPath)
+		check('Groups: new owner deletes the group', 'class="ok"' in page and status == 404, status)
+		groupPath = None
+	finally:
+		# Whoever owns the group now can delete it
+		if groupPath:
+			for get in (admin, other):
+				post(get, groupPath, {'action': 'delete', 'confirm': '1'})
+		subprocess.run(['docker', 'compose', 'exec', '-T', 'dataserver', '/var/www/zotero/misc/delete-user.sh', colleagueID],
+			cwd=ROOT, capture_output=True)
 
 def run_tests(userID, key):
 	lib = f'/users/{userID}'

@@ -183,14 +183,16 @@ class Accounts {
 	}
 }
 
-// Internal dataserver API, as super user for the website-only endpoints
+// Internal dataserver API, as super user for the website-only endpoints. Array bodies are sent as
+// JSON, strings as XML (the group endpoints). Returns the status and the decoded JSON, or the raw
+// response if it isn't JSON.
 class Api {
-	public static function request(string $method, string $path, ?array $body = null, bool $super = false): array {
+	public static function request(string $method, string $path, array|string|null $body = null, bool $super = false): array {
 		$ch = curl_init('http://dataserver-internal/' . $path);
 		$headers = ['Zotero-API-Version: 3'];
 		if ($body !== null) {
-			$headers[] = 'Content-Type: application/json';
-			curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+			$headers[] = 'Content-Type: ' . (is_string($body) ? 'text/xml' : 'application/json');
+			curl_setopt($ch, CURLOPT_POSTFIELDS, is_string($body) ? $body : json_encode($body));
 		}
 		curl_setopt_array($ch, [
 			CURLOPT_CUSTOMREQUEST => $method,
@@ -205,6 +207,6 @@ class Api {
 		if ($response === false) {
 			throw new Exception('dataserver request failed: ' . curl_error($ch));
 		}
-		return [curl_getinfo($ch, CURLINFO_RESPONSE_CODE), json_decode($response, true)];
+		return [curl_getinfo($ch, CURLINFO_RESPONSE_CODE), json_decode($response, true) ?? $response];
 	}
 }
