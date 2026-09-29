@@ -148,6 +148,11 @@ With OIDC, users are created by the portal on their first login. By hand, e.g. f
 - The setup runs once (on the next start or `bin/init.sh`). Afterwards the group is managed like any other:
   changes to owner, admins or `.env` don't undo each other. More writers:
   `bin/set-group-role.sh <groupID> <username> admin`.
+- **Groups for users:** logged-in users manage groups themselves at `<WEB_LIBRARY_URL>/settings/groups`
+  (linked as "Groups" in the web-library menu). Anyone can create a private group and becomes its owner.
+  Owner and admins add colleagues by username or email; accounts exist once a colleague has logged in, so
+  there are no invitations. Only the owner manages admins, changes settings, hands the group over or
+  deletes it; members can leave. The desktop client's "New Group…" opens zotero.org and doesn't work here.
 - Storage quota for new users comes from `ZOTERO_STORAGE_QUOTA_MB` (default: unlimited).
 
 ## User guide
