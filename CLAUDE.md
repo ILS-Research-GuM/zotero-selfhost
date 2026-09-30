@@ -33,8 +33,13 @@ plus our own portal, migrations and scripts. README.md describes the stack, READ
   accepts super-user requests only from private addresses.
 - `/translate/*` is proxied to the translation-server for logged-in users only. Keep it that way: the
   translation server fetches arbitrary URLs, so it stays off the internal networks (own `translate` network).
-- Texts are English and go through `t()`; `lang/de.php` translates them, keyed by the English text. Add every
-  new text there too.
+- SvelteKit (Svelte 5, adapter-node) in `docker/portal/`: server code in `src/lib/server/`, the login gate in
+  `src/hooks.server.ts`, pages under `src/routes/`. Pages are server-rendered forms without client-side
+  JavaScript (`csr = false`), so the strict CSP holds; form tokens replace Kit's origin check.
+- Everything that is not a portal route is the web-library page (`src/routes/[...rest]`).
+- Texts are English and go through `t()`; `src/lib/i18n/de.ts` translates them, keyed by the English text. Add
+  every new text there too.
+- Build and type-check run in Docker (`docker compose build portal` runs `svelte-check`); the host needs no Node.
 
 ## Testing
 

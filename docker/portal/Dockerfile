@@ -1,23 +1,18 @@
-FROM php:8.4-apache
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY docker/portal/package.json docker/portal/package-lock.json ./
+RUN npm ci --no-fund --no-audit
+COPY docker/portal/ ./
+RUN npm run check && npm run build && npm prune --omit=dev
 
-COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
-RUN install-php-extensions mysqli @composer \
-	&& cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
-
-WORKDIR /var/www/portal
-RUN composer require --no-interaction jumbojett/openid-connect-php:^1.0
-COPY docker/portal/src/ ./
-
-# Every request goes to index.php; no other file is reachable directly
-RUN a2enmod rewrite \
-	&& printf '%s\n' \
-		'<VirtualHost *:80>' \
-		'	DocumentRoot /var/www/portal' \
-		'	<Directory /var/www/portal>' \
-		'		Require all granted' \
-		'	</Directory>' \
-		'	RewriteEngine On' \
-		'	RewriteRule ^ /index.php [L]' \
-		'</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
-
+FROM node:22-alpine
+WORKDIR /app
+COPY --from=build /app/build ./build
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
+COPY docker/portal/docker-entrypoint.sh /usr/local/bin/
+# Translation requests (import) can be large
+ENV PORT=80 BODY_SIZE_LIMIT=10M NODE_ENV=production
+USER node
 EXPOSE 80
+ENTRYPOINT ["docker-entrypoint.sh"]

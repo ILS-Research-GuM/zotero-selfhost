@@ -18,7 +18,7 @@ previous package: see [Upgrading from the 2021 package](#upgrading-from-the-2021
 | `dataserver` | built, PHP 8.4 + Apache | Zotero API (sync, login, files) |
 | `stream-server` | built, Node 22 | WebSocket push notifications |
 | `web-library` | built, nginx | Static files of the browser UI |
-| `portal` | built, PHP 8.4 | Login (OIDC and/or password), per-user web-library page, desktop client browser login |
+| `portal` | built, SvelteKit (Node 22) | Login (OIDC and/or password), per-user web-library page, desktop client browser login |
 | `tinymce-clean` | built, Node 22 | Sanitizes note HTML for the dataserver |
 | `translation-server` | built, Node 24 | Metadata for "Add by identifier" (DOI, ISBN, PMID, arXiv) and URLs in the web-library |
 | `mysql` | `mysql:8.4` | Master, shard, ID and user databases |
@@ -107,7 +107,7 @@ The portal signs users in with an OpenID Connect provider, with username and pas
 
 The portal's pages are in English or German. A switcher on each page lets users pick the language (kept in
 a cookie); otherwise `PORTAL_LANGUAGE=en|de` sets the default, and without it the browser's language decides.
-Translations are in `docker/portal/src/lang/<language>.php`, keyed by the English text.
+Translations are in `docker/portal/src/lib/i18n/<language>.ts`, keyed by the English text.
 
 The password check accepts the same hashes as the dataserver (bcrypt, and salted SHA1 or MD5 from older
 installations). Failed attempts are delayed by two seconds. Accounts that the portal created for OIDC users
