@@ -51,6 +51,9 @@ plus our own portal, migrations and scripts. README.md describes the stack, READ
 
 ## Git
 
+- **Author and committer are ALWAYS `jannefleischer <janne.fleischer@ils-forschung.de>`. Check `git config
+  user.name` / `user.email` before every commit and fix wrong identities before pushing.**
+
 - One topic per commit, so the history can be reviewed step by step. Commit messages explain what changes and
   why, in some detail.
 - Check the current branch before committing.
